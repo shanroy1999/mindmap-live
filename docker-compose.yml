@@ -1,0 +1,82 @@
+# MindMap Live — local development services
+#
+# Starts PostgreSQL 15, Redis 7, and Adminer.
+# The FastAPI backend and Vite frontend run on the host (not in this file).
+#
+# Usage:
+#   cp .env.example .env          # fill in credentials once
+#   docker compose up -d          # start all services in the background
+#   docker compose down           # stop and remove containers
+#   docker compose down -v        # also wipe the postgres_data volume
+#
+# Ports exposed to the host:
+#   5432  — PostgreSQL (used by backend DATABASE_URL)
+#   6379  — Redis      (used by backend REDIS_URL)
+#   8080  — Adminer    (browser UI: http://localhost:8080)
+
+services:
+
+  # ── PostgreSQL 15 ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready exits 0 only when the server is accepting connections.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s  # give Postgres time to initialise on first boot
+
+  # ── Redis 7 ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # --appendonly yes: enable AOF persistence so pub/sub history survives restarts.
+    # --loglevel warning: suppress verbose INFO logs in docker compose logs.
+    command: redis-server --appendonly yes --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ── Adminer ───────────────────────────────────────────────────────────────────
+  # Visual database browser — navigate to http://localhost:8080
+  # Login: System=PostgreSQL, Server=postgres, User/Password/DB from .env
+  adminer:
+    image: adminer:4
+    restart: unless-stopped
+    environment:
+      # Pre-select the postgres service as the default server on the login screen.
+      ADMINER_DEFAULT_SERVER: postgres
+      # Optional: choose a built-in theme. Options: default, pepa-linha,
+      # dracula, flat, hydra, lucas, lucid, ng, pepa-linha-dark, rmsoft.
+      ADMINER_DESIGN: pepa-linha
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy  # wait until Postgres passes its health check
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  # Postgres data directory — survives `docker compose down` but not `down -v`.
+  postgres_data:
+    driver: local
+  # Redis AOF / RDB files — same lifecycle as postgres_data.
+  redis_data:
+    driver: local
