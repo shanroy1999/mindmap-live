@@ -14,25 +14,39 @@ A real-time collaborative knowledge graph builder. Create interconnected idea no
 
 | Layer | Technology |
 |---|---|
-| Backend | Python, FastAPI, SQLAlchemy |
-| Frontend | React, TypeScript, Vite |
-| Database | PostgreSQL |
-| Cache / Pub-Sub | Redis |
+| Backend | Python 3.11+, FastAPI, SQLAlchemy 2 |
+| Frontend | React 18, TypeScript (strict), Vite |
+| Database | PostgreSQL 15+ |
+| Cache / Pub-Sub | Redis 7+ |
 | AI | Anthropic Claude API |
-| Auth | JWT |
+| Auth | JWT (python-jose + passlib) |
 
 ## Project Structure
+
 ```
 mindmap-live/
-├── backend/          # FastAPI application
-│   ├── routers/      # API route handlers
-│   ├── models/       # SQLAlchemy ORM models
-│   ├── schemas/      # Pydantic request/response schemas
-│   ├── services/     # Business logic
-│   ├── db/           # Database connection and session
-│   └── tests/        # pytest test suite
-├── frontend/         # React + TypeScript application
-└── docs/             # Architecture and design documents
+├── backend/
+│   ├── db/               # Engine, session factory, declarative Base
+│   ├── models/           # SQLAlchemy ORM table definitions
+│   ├── schemas/          # Pydantic request/response schemas
+│   ├── routers/          # FastAPI route handlers (nodes, edges, users)
+│   ├── services/         # Business logic and AI integration
+│   ├── tests/            # pytest test suite
+│   ├── main.py           # FastAPI app + middleware wiring
+│   ├── requirements.txt
+│   └── .env.example
+├── frontend/
+│   ├── src/
+│   │   ├── api/          # REST API client
+│   │   ├── components/   # React components
+│   │   ├── hooks/        # Custom React hooks
+│   │   └── types/        # Shared TypeScript interfaces
+│   ├── index.html
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   └── .env.example
+└── docs/
+    └── ARCHITECTURE.md   # System design and key decisions
 ```
 
 ## Getting Started
@@ -45,25 +59,44 @@ mindmap-live/
 - Redis 7+
 
 ### Backend
+
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in your values
+cp .env.example .env            # fill in your values
 uvicorn main:app --reload
 ```
 
+API docs available at <http://localhost:8000/docs>.
+
 ### Frontend
+
 ```bash
 cd frontend
 npm install
+cp .env.example .env.local      # fill in your values
 npm run dev
 ```
 
+App available at <http://localhost:5173>.
+
 ## Environment Variables
 
-See `backend/.env.example` for the full list of required variables.
+| File | Purpose |
+|---|---|
+| `backend/.env.example` | Backend secrets (DB, API keys, JWT) |
+| `frontend/.env.example` | Frontend config (API/WS URLs) |
+
+Copy each file to `.env` / `.env.local` and fill in real values. **Never commit secret files.**
+
+## Running Tests
+
+```bash
+cd backend
+pytest
+```
 
 ## License
 
