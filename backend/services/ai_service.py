@@ -142,44 +142,166 @@ async def cluster_nodes(nodes: list[dict]) -> list[dict]:
     return _extract_json(raw_text)
 
 
+def _compute_tree_layout(
+    hierarchy: list[dict],
+    all_node_ids: list[str],
+    canvas_center: int = 600,
+    x_spacing: int = 200,
+    y_spacing: int = 150,
+    y_start: int = 50,
+) -> list[dict]:
+    """Compute x/y positions from a parent-child hierarchy.
+
+    Uses a bottom-up subtree-width calculation so siblings are centred cleanly
+    under their parent at any depth, with no overlap.
+
+    Args:
+        hierarchy:     List of ``{"node_id": str, "parent_id": str | None}``.
+        all_node_ids:  Complete list of IDs (orphan-detection guard).
+        canvas_center: Horizontal centre of the canvas in pixels.
+        x_spacing:     Horizontal space allocated per leaf node.
+        y_spacing:     Vertical gap between levels in pixels.
+        y_start:       Y coordinate of the root level.
+
+    Returns:
+        List of ``{"id": str, "x": int, "y": int, "level": int}`` dicts,
+        one per entry in *all_node_ids*.
+    """
+    node_set = set(all_node_ids)
+
+    # Build parent → children map, ignoring invalid parent refs.
+    children: dict[str | None, list[str]] = {None: []}
+    for item in hierarchy:
+        nid = item.get("node_id", "")
+        if not nid or nid not in node_set:
+            continue
+        children.setdefault(nid, [])
+        pid: str | None = item.get("parent_id") or None
+        if pid and pid not in node_set:
+            pid = None
+        if nid not in children[pid if pid is not None else None]:
+            children.setdefault(pid, []).append(nid)
+
+    # Any node not mentioned in the hierarchy becomes an extra root.
+    mentioned = {item.get("node_id") for item in hierarchy}
+    for nid in all_node_ids:
+        if nid not in mentioned:
+            children[None].append(nid)
+            children.setdefault(nid, [])
+
+    roots = children.get(None, [])
+    if not roots:
+        roots = all_node_ids[:1]
+
+    # Count leaves in each subtree to determine horizontal space allocation.
+    def _leaf_count(nid: str, seen: set[str]) -> int:
+        if nid in seen:
+            return 1
+        seen.add(nid)
+        kids = [k for k in children.get(nid, []) if k not in seen]
+        if not kids:
+            return 1
+        return sum(_leaf_count(k, seen) for k in kids)
+
+    positions: dict[str, dict[str, int]] = {}
+
+    def _place(nid: str, level: int, x_left: float, seen: set[str]) -> float:
+        """Recursively place *nid* and its subtree; return the right boundary x."""
+        if nid in seen:
+            # Cycle guard — treat as a leaf at current cursor.
+            if nid not in positions:
+                positions[nid] = {
+                    "x": round(x_left + x_spacing / 2),
+                    "y": y_start + level * y_spacing,
+                    "level": level,
+                }
+            return x_left + x_spacing
+        seen.add(nid)
+
+        kids = [k for k in children.get(nid, []) if k not in seen]
+        if not kids:
+            x = x_left + x_spacing / 2
+            positions[nid] = {
+                "x": round(x),
+                "y": y_start + level * y_spacing,
+                "level": level,
+            }
+            return x_left + x_spacing
+
+        x_cursor = x_left
+        child_centers: list[float] = []
+        for kid in kids:
+            x_right = _place(kid, level + 1, x_cursor, seen)
+            child_centers.append(positions[kid]["x"])
+            x_cursor = x_right
+
+        positions[nid] = {
+            "x": round((child_centers[0] + child_centers[-1]) / 2),
+            "y": y_start + level * y_spacing,
+            "level": level,
+        }
+        return x_cursor
+
+    total_leaves = sum(_leaf_count(r, set()) for r in roots)
+    x_cursor: float = canvas_center - total_leaves * x_spacing / 2
+    seen: set[str] = set()
+    for root in roots:
+        x_cursor = _place(root, 0, x_cursor, seen)
+
+    # Fallback: place any still-unpositioned nodes in a row below the tree.
+    unpositioned = [nid for nid in all_node_ids if nid not in positions]
+    if unpositioned:
+        max_level = max((p["level"] for p in positions.values()), default=0)
+        total = len(unpositioned)
+        for i, nid in enumerate(unpositioned):
+            positions[nid] = {
+                "x": round(canvas_center + (i - (total - 1) / 2) * x_spacing),
+                "y": y_start + (max_level + 2) * y_spacing,
+                "level": max_level + 2,
+            }
+
+    return [
+        {"id": nid, "x": pos["x"], "y": pos["y"], "level": pos["level"]}
+        for nid, pos in positions.items()
+    ]
+
+
 async def auto_layout(
     nodes: list[dict],
     existing_edges: list[dict],
 ) -> dict:
-    """Compute a hierarchical layout via two focused Claude calls.
+    """Compute a hierarchical layout: Claude decides structure, Python computes positions.
 
-    Call 1 — hierarchy + positions:
-        Ask Claude to assign each node a level (0 = root, 1 = children, …)
-        and compute x/y coordinates:
-        - root at x=600, y=50
-        - each level adds 150 px to y
-        - siblings spread 200 px apart horizontally, centred under their parent
+    Claude is only asked for the parent-child hierarchy (a simple, compact
+    response that scales to 40+ nodes without truncation).  All x/y coordinate
+    math is performed in ``_compute_tree_layout``.
+
+    Call 1 — hierarchy:
+        Returns ``[{"node_id": str, "parent_id": str | null}]`` — one entry per node.
 
     Call 2 — edge suggestions:
-        Ask Claude to suggest up to 4 new edges that improve the graph.
+        Returns ``[{"source_id", "target_id", "reason"}]`` — up to 4 new edges.
 
     Args:
         nodes:          List of dicts with ``id``, ``label``, and ``node_type``.
         existing_edges: List of dicts with ``source_id`` and ``target_id``.
 
     Returns:
-        A dict with two keys:
-        ``nodes``         — list of ``{"id", "x", "y", "level"}`` dicts.
-        ``edges_to_add``  — list of ``{"source_id", "target_id", "reason"}`` dicts.
-        ``clusters``      — empty list (clusters handled separately via /clusters).
+        A dict with keys:
+        ``nodes``        — list of ``{"id", "x", "y", "level"}`` dicts.
+        ``edges_to_add`` — list of ``{"source_id", "target_id", "reason"}`` dicts.
+        ``clusters``     — empty list (handled separately via /clusters).
 
     Raises:
         anthropic.APIError: On network or API-level failures.
-        ValueError:         If the model returns unparseable JSON, with the raw
-                            response included in the message for debugging.
+        ValueError:         If the model returns unparseable JSON; the raw
+                            response is included in the error message.
     """
     if not nodes:
         return {"nodes": [], "edges_to_add": [], "clusters": []}
 
-    node_lines = "\n".join(
-        f'{n["id"]} | {n["label"]}'
-        for n in nodes
-    )
+    all_node_ids = [n["id"] for n in nodes]
+    node_lines = "\n".join(f'{n["id"]} | {n["label"]}' for n in nodes)
     edge_lines = (
         "\n".join(f'{e["source_id"]} -> {e["target_id"]}' for e in existing_edges)
         if existing_edges
@@ -188,40 +310,42 @@ async def auto_layout(
 
     client = _client()
 
-    # ── Call 1: hierarchy and positions ───────────────────────────────────────
-    layout_prompt = (
-        "You are a graph layout tool. Return ONLY a raw JSON array. "
+    # ── Call 1: hierarchy only ─────────────────────────────────────────────────
+    hierarchy_prompt = (
+        "You are a graph analysis tool. Return ONLY a raw JSON array. "
         "No explanation. No markdown. No code blocks. Just the JSON array.\n\n"
         "NODES (id | label):\n"
         f"{node_lines}\n\n"
         "EDGES (source_id -> target_id):\n"
         f"{edge_lines}\n\n"
-        "Task: Assign each node a level and x/y position for a top-down tree layout.\n"
+        "Task: Decide the parent-child hierarchy for a top-down tree layout.\n"
         "Rules:\n"
-        "- Pick one root node (level 0). Place it at x=600, y=50.\n"
-        "- Direct children of root are level 1, at y=200.\n"
-        "- Their children are level 2, at y=350. And so on (add 150 per level).\n"
-        "- Spread siblings horizontally 200px apart, centred under their parent.\n"
-        "- Every node must appear exactly once.\n\n"
-        "Return a JSON array where each element has exactly these fields:\n"
-        '{"id": "the-node-id", "x": 600, "y": 50, "level": 0}\n\n'
+        "- Pick one root node. Set its parent_id to null.\n"
+        "- Assign every other node a parent_id (must be one of the node ids above).\n"
+        "- Every node must appear exactly once.\n"
+        "- Use existing edges to guide relationships where possible.\n\n"
+        "Return a JSON array where each element has exactly these two fields:\n"
+        '{"node_id": "the-node-id", "parent_id": "parent-node-id-or-null"}\n\n'
         "Example output:\n"
-        '[{"id":"abc","x":600,"y":50,"level":0},{"id":"def","x":500,"y":200,"level":1}]'
+        '[{"node_id":"abc","parent_id":null},{"node_id":"def","parent_id":"abc"}]'
     )
 
     msg1 = await client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": layout_prompt}],
+        max_tokens=8192,
+        messages=[{"role": "user", "content": hierarchy_prompt}],
     )
-    raw_layout: str = msg1.content[0].text if msg1.content else "[]"
+    raw_hierarchy: str = msg1.content[0].text if msg1.content else "[]"
     try:
-        layout_nodes = _extract_json(raw_layout)
+        hierarchy = _extract_json(raw_hierarchy)
     except Exception as exc:
         raise ValueError(
-            f"Layout call returned unparseable JSON. "
-            f"Raw response: {raw_layout!r}. Parse error: {exc}"
+            f"Hierarchy call returned unparseable JSON. "
+            f"Raw response: {raw_hierarchy!r}. Parse error: {exc}"
         ) from exc
+
+    # Compute x/y coordinates entirely in Python.
+    layout_nodes = _compute_tree_layout(hierarchy, all_node_ids)
 
     # ── Call 2: edge suggestions ───────────────────────────────────────────────
     edge_prompt = (
