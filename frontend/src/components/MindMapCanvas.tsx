@@ -10,7 +10,15 @@ import ReactFlow, {
 } from 'react-flow-renderer'
 import 'react-flow-renderer/dist/style.css'
 import apiClient from '../api/client'
+import { useMapSync } from '../hooks/useMapSync'
 import type { ApiNode, ApiEdge } from '../types/api'
+
+interface NodeMovedEvent {
+  type: 'node_moved'
+  nodeId: string
+  x: number
+  y: number
+}
 
 interface Props {
   mapId: string
@@ -36,6 +44,7 @@ function toRFEdge(e: ApiEdge): RFEdge {
 }
 
 export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
+  const token = localStorage.getItem('token') ?? ''
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
@@ -49,11 +58,26 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
     }).catch(console.error)
   }, [mapId, setNodes, setEdges])
 
+  // Apply incoming node_moved events from other users directly to local state.
+  const handleEvent = useCallback((event: Record<string, unknown>) => {
+    if (event.type === 'node_moved') {
+      const { nodeId, x, y } = event as unknown as NodeMovedEvent
+      setNodes((prev) =>
+        prev.map((n) => (n.id === nodeId ? { ...n, position: { x, y } } : n)),
+      )
+    }
+  }, [setNodes])
+
+  const { sendEvent } = useMapSync(mapId, token, { onEvent: handleEvent })
+
   const handleNodeDragStop: NodeDragHandler = useCallback((_event, node) => {
+    // Persist to the database.
     apiClient
       .patch(`/api/nodes/${node.id}`, { x: node.position.x, y: node.position.y })
       .catch(console.error)
-  }, [])
+    // Broadcast the new position to all other connected clients.
+    sendEvent({ type: 'node_moved', nodeId: node.id, x: node.position.x, y: node.position.y })
+  }, [sendEvent])
 
   const handleAddNode = async () => {
     try {
