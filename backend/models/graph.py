@@ -212,6 +212,10 @@ class Node(Base):
     color: Mapped[str] = mapped_column(
         String(7), nullable=False, server_default=text("'#6366f1'")
     )
+    # Semantic type of the node. One of: idea, decision, question, note.
+    node_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'idea'")
+    )
     x: Mapped[float] = mapped_column(
         Double(), nullable=False, server_default=text("0")
     )

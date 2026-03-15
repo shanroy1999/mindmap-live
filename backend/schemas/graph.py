@@ -149,6 +149,11 @@ class NodeCreate(BaseModel):
         pattern=r"^#[0-9a-fA-F]{6}$",
         description="Hex colour code, e.g. #6366f1",
     )
+    node_type: str = Field(
+        "idea",
+        pattern=r"^(idea|decision|question|note)$",
+        description="Semantic type: idea, decision, question, or note",
+    )
     x: float = Field(0.0, description="Canvas x-coordinate in logical pixels")
     y: float = Field(0.0, description="Canvas y-coordinate in logical pixels")
 
@@ -161,6 +166,7 @@ class NodeRead(BaseModel):
     label: str
     description: Optional[str]
     color: str
+    node_type: str
     x: float
     y: float
     created_by: Optional[uuid.UUID]
@@ -176,6 +182,11 @@ class NodeUpdate(BaseModel):
     label: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = None
     color: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    node_type: Optional[str] = Field(
+        None,
+        pattern=r"^(idea|decision|question|note)$",
+        description="Semantic type: idea, decision, question, or note",
+    )
     x: Optional[float] = None
     y: Optional[float] = None
 

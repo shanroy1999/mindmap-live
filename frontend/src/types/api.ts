@@ -24,6 +24,7 @@ export interface ApiNode {
   label: string
   description: string | null
   color: string
+  node_type: string
   x: number
   y: number
   created_by: string | null

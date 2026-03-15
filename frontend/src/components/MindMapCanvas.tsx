@@ -38,11 +38,28 @@ interface NodeCluster {
   node_ids: string[]
 }
 
+interface ContextMenu {
+  x: number
+  y: number
+  nodeId: string
+}
+
 interface Props {
   mapId: string
   title: string
   onLogout: () => void
   onBackToDashboard: () => void
+}
+
+// ── Node type config ───────────────────────────────────────────────────────────
+
+type NodeType = 'idea' | 'decision' | 'question' | 'note'
+
+const NODE_TYPE_CONFIG: Record<NodeType, { label: string; icon: string; accent: string }> = {
+  idea:     { label: 'Idea',     icon: '💡', accent: '#6366f1' },
+  decision: { label: 'Decision', icon: '✓',  accent: '#f59e0b' },
+  question: { label: 'Question', icon: '?',  accent: '#ef4444' },
+  note:     { label: 'Note',     icon: '📝', accent: '#71717a' },
 }
 
 // ── Editable custom node ──────────────────────────────────────────────────────
@@ -54,16 +71,30 @@ function EditableNode({ id, data, selected }: NodeProps) {
   const editing = data.editing as boolean
   const onCommit = data.onCommit as (id: string, label: string) => void
   const bgColor = (data.bgColor as string | undefined) ?? '#27272a'
+  const nodeType = ((data.nodeType as string | undefined) ?? 'idea') as NodeType
+  const typeConfig = NODE_TYPE_CONFIG[nodeType]
 
   return (
     <div
-      className={`rounded text-xs text-center min-w-[60px] px-2.5 py-2 border transition-colors ${
+      className={`relative rounded text-xs text-center min-w-[60px] px-2.5 py-2 border transition-colors ${
         selected
           ? 'border-indigo-400 shadow-lg shadow-indigo-900/40'
           : 'border-white/15'
       }`}
-      style={{ background: bgColor, color: '#fff' }}
+      style={{
+        background: bgColor,
+        color: '#fff',
+        borderLeftColor: typeConfig.accent,
+        borderLeftWidth: 3,
+      }}
     >
+      {/* Type badge — top-right corner */}
+      <span
+        className="absolute -top-2 -right-2 w-4 h-4 flex items-center justify-center bg-zinc-800 border border-white/10 rounded-full text-[8px] leading-none select-none"
+        style={{ color: typeConfig.accent }}
+      >
+        {typeConfig.icon}
+      </span>
       <Handle type="target" position={Position.Top} style={handleStyle} />
       {editing ? (
         <input
@@ -98,7 +129,7 @@ function toRFNode(
     id: n.id,
     type: 'editable',
     position: { x: n.x, y: n.y },
-    data: { label: n.label, editing: false, onCommit },
+    data: { label: n.label, editing: false, onCommit, nodeType: n.node_type ?? 'idea' },
   }
 }
 
@@ -124,6 +155,9 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
   const [clusters, setClusters] = useState<NodeCluster[]>([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [loadingClusters, setLoadingClusters] = useState(false)
+  const [typePickerOpen, setTypePickerOpen] = useState(false)
+  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
+  const typePickerRef = useRef<HTMLDivElement>(null)
 
   // Keep a ref so the stable `stableCommit` wrapper below always calls the
   // latest version of `commitEdit` without needing to be recreated.
@@ -166,6 +200,18 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
       })
       .catch(console.error)
   }, [mapId, setNodes, setEdges, stableCommit])
+
+  // Close type picker when clicking outside.
+  useEffect(() => {
+    if (!typePickerOpen) return
+    const handleMouseDown = (e: MouseEvent) => {
+      if (typePickerRef.current && !typePickerRef.current.contains(e.target as Node)) {
+        setTypePickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => document.removeEventListener('mousedown', handleMouseDown)
+  }, [typePickerOpen])
 
   // Apply incoming node_moved events from other users.
   const handleEvent = useCallback(
@@ -239,6 +285,11 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'Escape') {
+        setContextMenu(null)
+        setTypePickerOpen(false)
+        return
+      }
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
       // Don't intercept while the user is typing in any input / textarea.
       if (
@@ -264,23 +315,51 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
     [nodes, edges, setNodes, setEdges],
   )
 
-  // ── Feature 4: prompt for label when creating a node ───────────────────────
+  // ── Feature 4: type picker → create node ───────────────────────────────────
 
-  const handleAddNode = async () => {
-    try {
-      const res = await apiClient.post<ApiNode>(`/api/mindmaps/${mapId}/nodes`, {
-        label: 'New Node',
-        x: 100 + Math.random() * 400,
-        y: 100 + Math.random() * 300,
-      })
-      const node = toRFNode(res.data, stableCommit)
-      setNodes((prev) => [...prev, { ...node, data: { ...node.data, editing: true } }])
-    } catch (err) {
-      console.error('Failed to create node', err)
-    }
-  }
+  const createNode = useCallback(
+    async (nodeType: NodeType) => {
+      setTypePickerOpen(false)
+      try {
+        const res = await apiClient.post<ApiNode>(`/api/mindmaps/${mapId}/nodes`, {
+          label: 'New Node',
+          node_type: nodeType,
+          x: 100 + Math.random() * 400,
+          y: 100 + Math.random() * 300,
+        })
+        const node = toRFNode(res.data, stableCommit)
+        setNodes((prev) => [...prev, { ...node, data: { ...node.data, editing: true } }])
+      } catch (err) {
+        console.error('Failed to create node', err)
+      }
+    },
+    [mapId, stableCommit, setNodes],
+  )
 
-  // ── Feature 5: click title to rename ───────────────────────────────────────
+  // ── Feature 5: right-click context menu → change node type ─────────────────
+
+  const handleNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: RFNode) => {
+      event.preventDefault()
+      setContextMenu({ x: event.clientX, y: event.clientY, nodeId: node.id })
+    },
+    [],
+  )
+
+  const handleChangeNodeType = useCallback(
+    (nodeId: string, nodeType: NodeType) => {
+      setContextMenu(null)
+      setNodes((prev) =>
+        prev.map((n) =>
+          n.id === nodeId ? { ...n, data: { ...n.data, nodeType } } : n,
+        ),
+      )
+      apiClient.patch(`/api/nodes/${nodeId}`, { node_type: nodeType }).catch(console.error)
+    },
+    [setNodes],
+  )
+
+  // ── Feature 6: click title to rename ───────────────────────────────────────
 
   const commitTitleEdit = () => {
     const trimmed = localTitle.trim()
@@ -401,12 +480,41 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
           </span>
         )}
         <div className="h-4 w-px bg-white/10" />
-        <button
-          onClick={handleAddNode}
-          className="px-3 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-white border border-white/10 rounded-md transition-colors cursor-pointer"
-        >
-          + New Node
-        </button>
+
+        {/* New Node button with type picker popover */}
+        <div className="relative" ref={typePickerRef}>
+          <button
+            onClick={() => setTypePickerOpen((o) => !o)}
+            className={`px-3 py-1.5 text-xs font-semibold border rounded-md transition-colors cursor-pointer ${
+              typePickerOpen
+                ? 'bg-zinc-700 border-white/20 text-white'
+                : 'bg-zinc-800 hover:bg-zinc-700 border-white/10 text-white'
+            }`}
+          >
+            + New Node
+          </button>
+          {typePickerOpen && (
+            <div className="absolute top-full left-0 mt-1.5 bg-zinc-900 border border-white/10 rounded-lg p-1.5 flex flex-col gap-0.5 z-50 shadow-xl min-w-[140px]">
+              {(Object.entries(NODE_TYPE_CONFIG) as [NodeType, typeof NODE_TYPE_CONFIG[NodeType]][]).map(
+                ([type, cfg]) => (
+                  <button
+                    key={type}
+                    onClick={() => createNode(type)}
+                    className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-white/70 hover:text-white hover:bg-zinc-800 rounded-md transition-colors cursor-pointer text-left"
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ background: cfg.accent }}
+                    />
+                    <span className="flex-1">{cfg.label}</span>
+                    <span className="text-white/40">{cfg.icon}</span>
+                  </button>
+                ),
+              )}
+            </div>
+          )}
+        </div>
+
         <button
           onClick={() => setSidebarOpen((o) => !o)}
           className={`px-3 py-1.5 text-xs font-semibold border rounded-md transition-colors cursor-pointer ${
@@ -438,7 +546,9 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
             onEdgesChange={onEdgesChange}
             onNodeDragStop={handleNodeDragStop}
             onNodeDoubleClick={handleNodeDoubleClick}
+            onNodeContextMenu={handleNodeContextMenu}
             onConnect={handleConnect}
+            onPaneClick={() => setContextMenu(null)}
             deleteKeyCode={null}
             fitView
           >
@@ -544,6 +654,41 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
           </div>
         )}
       </div>
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <>
+          {/* Invisible overlay to catch outside clicks */}
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setContextMenu(null)}
+          />
+          <div
+            className="fixed z-50 bg-zinc-900 border border-white/10 rounded-lg shadow-xl py-1 min-w-[160px]"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+          >
+            <p className="px-3 py-1 text-[10px] uppercase font-bold tracking-wider text-white/30">
+              Change type
+            </p>
+            {(Object.entries(NODE_TYPE_CONFIG) as [NodeType, typeof NODE_TYPE_CONFIG[NodeType]][]).map(
+              ([type, cfg]) => (
+                <button
+                  key={type}
+                  onClick={() => handleChangeNodeType(contextMenu.nodeId, type)}
+                  className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-white/70 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ background: cfg.accent }}
+                  />
+                  <span>{cfg.icon}</span>
+                  <span>{cfg.label}</span>
+                </button>
+              ),
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }
