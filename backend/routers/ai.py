@@ -218,9 +218,11 @@ async def auto_layout_map(
         ) from exc
 
     try:
+        # clusters is intentionally empty — handled by the separate /clusters endpoint
+        layout.setdefault("clusters", [])
         return AutoLayoutResponse(**layout)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"AI returned an unexpected layout structure: {exc}",
+            detail=f"AI returned an unexpected layout structure: {exc}. Layout keys: {list(layout.keys())}",
         ) from exc

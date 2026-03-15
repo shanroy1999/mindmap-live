@@ -146,93 +146,111 @@ async def auto_layout(
     nodes: list[dict],
     existing_edges: list[dict],
 ) -> dict:
-    """Ask Claude to compute a hierarchical tree layout for the given graph.
+    """Compute a hierarchical layout via two focused Claude calls.
 
-    The model determines the optimal root node, assigns levels, and computes
-    x/y coordinates using the following algorithm:
+    Call 1 — hierarchy + positions:
+        Ask Claude to assign each node a level (0 = root, 1 = children, …)
+        and compute x/y coordinates:
+        - root at x=600, y=50
+        - each level adds 150 px to y
+        - siblings spread 200 px apart horizontally, centred under their parent
 
-    - y = level × 150   (root at y=0, children at y=150, grandchildren at y=300, …)
-    - x_i = parent_x + (i − (n−1)/2) × 200   (siblings centred under their parent)
-    - Root node: x = 0
+    Call 2 — edge suggestions:
+        Ask Claude to suggest up to 4 new edges that improve the graph.
 
     Args:
         nodes:          List of dicts with ``id``, ``label``, and ``node_type``.
         existing_edges: List of dicts with ``source_id`` and ``target_id``.
 
     Returns:
-        A dict with three keys:
-
-        ``nodes``
-            List of ``{"id", "x", "y", "level"}`` dicts — one per input node.
-        ``edges_to_add``
-            List of ``{"source_id", "target_id", "reason"}`` dicts for 2–4
-            new edges that improve the graph's semantic structure.
-        ``clusters``
-            List of ``{"cluster_name", "node_ids", "color"}`` dicts grouping
-            related nodes with distinct accent colours.
+        A dict with two keys:
+        ``nodes``         — list of ``{"id", "x", "y", "level"}`` dicts.
+        ``edges_to_add``  — list of ``{"source_id", "target_id", "reason"}`` dicts.
+        ``clusters``      — empty list (clusters handled separately via /clusters).
 
     Raises:
         anthropic.APIError: On network or API-level failures.
-        ValueError:         If the model returns unparseable or invalid JSON.
+        ValueError:         If the model returns unparseable JSON, with the raw
+                            response included in the message for debugging.
     """
     if not nodes:
         return {"nodes": [], "edges_to_add": [], "clusters": []}
 
     node_lines = "\n".join(
-        f'- id={n["id"]}  label="{n["label"]}"  type={n.get("node_type", "idea")}'
+        f'{n["id"]} | {n["label"]}'
         for n in nodes
     )
     edge_lines = (
-        "\n".join(f'- {e["source_id"]} → {e["target_id"]}' for e in existing_edges)
+        "\n".join(f'{e["source_id"]} -> {e["target_id"]}' for e in existing_edges)
         if existing_edges
         else "(none)"
     )
 
-    prompt = (
-        "You are a graph layout expert.\n\n"
-        "Given a mind map with nodes and edges, produce a hierarchical tree layout "
-        "and return it as a single JSON object.\n\n"
-        "NODES:\n"
+    client = _client()
+
+    # ── Call 1: hierarchy and positions ───────────────────────────────────────
+    layout_prompt = (
+        "You are a graph layout tool. Return ONLY a raw JSON array. "
+        "No explanation. No markdown. No code blocks. Just the JSON array.\n\n"
+        "NODES (id | label):\n"
         f"{node_lines}\n\n"
-        "EXISTING EDGES:\n"
+        "EDGES (source_id -> target_id):\n"
         f"{edge_lines}\n\n"
-        "LAYOUT ALGORITHM — follow exactly:\n"
-        "1. Pick the single root node — the most foundational concept, or the node "
-        "with the most outgoing connections.\n"
-        "2. Build a hierarchy from the existing edges:\n"
-        "   - root is level 0\n"
-        "   - direct children of root are level 1\n"
-        "   - their children are level 2, and so on\n"
-        "   - Unconnected nodes: assign as children of the nearest thematically "
-        "related node.\n"
-        "3. Compute positions:\n"
-        "   - y = level × 150  (root at y=0, children at y=150, …)\n"
-        "   - For siblings (nodes sharing the same parent), centre them under the "
-        "parent:\n"
-        "       x_i = parent_x + (i − (n−1)/2) × 200\n"
-        "     where i = 0-based sibling index, n = total number of siblings\n"
-        "   - Root node: x = 0\n\n"
-        "Respond with ONLY the following JSON object — no prose, no markdown fences:\n"
-        "{\n"
-        '  "nodes": [{"id": "<id>", "x": <int>, "y": <int>, "level": <int>}],\n'
-        '  "edges_to_add": [{"source_id": "<id>", "target_id": "<id>", '
-        '"reason": "<one sentence>"}],\n'
-        '  "clusters": [{"cluster_name": "<name>", "node_ids": ["<id>", ...], '
-        '"color": "<hex>"}]\n'
-        "}\n\n"
-        "CONSTRAINTS:\n"
-        '- Every node must appear in "nodes" exactly once.\n'
-        '- Suggest 2–4 new edges in "edges_to_add" (not already in existing edges).\n'
-        "- Create 2–4 clusters. Choose colours only from: "
-        '"#6366f1", "#f59e0b", "#ef4444", "#10b981".\n'
-        "- All x and y values must be plain integers."
+        "Task: Assign each node a level and x/y position for a top-down tree layout.\n"
+        "Rules:\n"
+        "- Pick one root node (level 0). Place it at x=600, y=50.\n"
+        "- Direct children of root are level 1, at y=200.\n"
+        "- Their children are level 2, at y=350. And so on (add 150 per level).\n"
+        "- Spread siblings horizontally 200px apart, centred under their parent.\n"
+        "- Every node must appear exactly once.\n\n"
+        "Return a JSON array where each element has exactly these fields:\n"
+        '{"id": "the-node-id", "x": 600, "y": 50, "level": 0}\n\n'
+        "Example output:\n"
+        '[{"id":"abc","x":600,"y":50,"level":0},{"id":"def","x":500,"y":200,"level":1}]'
     )
 
-    client = _client()
-    message = await client.messages.create(
+    msg1 = await client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
+        max_tokens=4096,
+        messages=[{"role": "user", "content": layout_prompt}],
     )
-    raw_text: str = message.content[0].text if message.content else "{}"
-    return _extract_json_object(raw_text)
+    raw_layout: str = msg1.content[0].text if msg1.content else "[]"
+    try:
+        layout_nodes = _extract_json(raw_layout)
+    except Exception as exc:
+        raise ValueError(
+            f"Layout call returned unparseable JSON. "
+            f"Raw response: {raw_layout!r}. Parse error: {exc}"
+        ) from exc
+
+    # ── Call 2: edge suggestions ───────────────────────────────────────────────
+    edge_prompt = (
+        "You are a knowledge graph assistant. Return ONLY a raw JSON array. "
+        "No explanation. No markdown. No code blocks. Just the JSON array.\n\n"
+        "NODES (id | label):\n"
+        f"{node_lines}\n\n"
+        "EXISTING EDGES (source_id -> target_id):\n"
+        f"{edge_lines}\n\n"
+        "Task: Suggest up to 4 new meaningful relationships between nodes "
+        "that do NOT already have an edge.\n\n"
+        "Return a JSON array where each element has exactly these fields:\n"
+        '{"source_id": "id1", "target_id": "id2", "reason": "one sentence"}\n\n'
+        "Example output:\n"
+        '[{"source_id":"abc","target_id":"def","reason":"abc depends on def."}]'
+    )
+
+    msg2 = await client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=4096,
+        messages=[{"role": "user", "content": edge_prompt}],
+    )
+    raw_edges: str = msg2.content[0].text if msg2.content else "[]"
+    try:
+        edges_to_add = _extract_json(raw_edges)
+    except Exception as exc:
+        raise ValueError(
+            f"Edge suggestion call returned unparseable JSON. "
+            f"Raw response: {raw_edges!r}. Parse error: {exc}"
+        ) from exc
+
+    return {"nodes": layout_nodes, "edges_to_add": edges_to_add, "clusters": []}
