@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react'
 
-const WS_BASE = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000/ws'
+// Derive the WebSocket base URL from VITE_API_URL by replacing http(s) with ws(s).
+// Falls back to a relative path so same-origin deployments work without any env var.
+const _apiUrl: string = import.meta.env.VITE_API_URL ?? ''
+const WS_BASE = (_apiUrl
+  ? _apiUrl.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://')
+  : '') + '/ws'
 
 type JsonObject = Record<string, unknown>
 
