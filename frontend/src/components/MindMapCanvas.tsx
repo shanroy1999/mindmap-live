@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, {
   addEdge,
   Background,
@@ -27,6 +27,17 @@ interface NodeMovedEvent {
   y: number
 }
 
+interface RelationshipSuggestion {
+  source_id: string
+  target_id: string
+  reason: string
+}
+
+interface NodeCluster {
+  cluster_name: string
+  node_ids: string[]
+}
+
 interface Props {
   mapId: string
   title: string
@@ -41,9 +52,10 @@ function EditableNode({ id, data }: NodeProps) {
   const label = data.label as string
   const editing = data.editing as boolean
   const onCommit = data.onCommit as (id: string, label: string) => void
+  const bgColor = (data.bgColor as string | undefined) ?? '#fff'
 
   return (
-    <div style={rfNodeStyle}>
+    <div style={{ ...rfNodeStyle, background: bgColor }}>
       <Handle type="target" position={Position.Top} style={handleStyle} />
       {editing ? (
         <input
@@ -100,6 +112,11 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [localTitle, setLocalTitle] = useState(title)
   const [editingTitle, setEditingTitle] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [suggestions, setSuggestions] = useState<RelationshipSuggestion[]>([])
+  const [clusters, setClusters] = useState<NodeCluster[]>([])
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+  const [loadingClusters, setLoadingClusters] = useState(false)
 
   // Keep a ref so the stable `stableCommit` wrapper below always calls the
   // latest version of `commitEdit` without needing to be recreated.
@@ -268,6 +285,74 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
       .catch(console.error)
   }
 
+  // ── AI sidebar ──────────────────────────────────────────────────────────────
+
+  // Fast label lookup for rendering suggestion / cluster cards.
+  const nodeById = useMemo(
+    () => new Map(nodes.map((n) => [n.id, n.data.label as string])),
+    [nodes],
+  )
+
+  const handleSuggest = async () => {
+    setLoadingSuggestions(true)
+    try {
+      const res = await apiClient.post<RelationshipSuggestion[]>(
+        `/api/mindmaps/${mapId}/suggest-relationships`,
+      )
+      setSuggestions(res.data)
+    } catch (err) {
+      console.error('AI suggest failed', err)
+    } finally {
+      setLoadingSuggestions(false)
+    }
+  }
+
+  const handleCluster = async () => {
+    setLoadingClusters(true)
+    try {
+      const res = await apiClient.get<NodeCluster[]>(
+        `/api/mindmaps/${mapId}/clusters`,
+      )
+      setClusters(res.data)
+      // Build nodeId → bg color map and apply to canvas nodes.
+      const colorMap = new Map<string, string>()
+      res.data.forEach((c, ci) => {
+        c.node_ids.forEach((id) =>
+          colorMap.set(id, CLUSTER_BG_COLORS[ci % CLUSTER_BG_COLORS.length]),
+        )
+      })
+      setNodes((prev) =>
+        prev.map((n) => ({ ...n, data: { ...n.data, bgColor: colorMap.get(n.id) } })),
+      )
+    } catch (err) {
+      console.error('AI cluster failed', err)
+    } finally {
+      setLoadingClusters(false)
+    }
+  }
+
+  const handleClearClusters = () => {
+    setClusters([])
+    setNodes((prev) =>
+      prev.map((n) => ({ ...n, data: { ...n.data, bgColor: undefined } })),
+    )
+  }
+
+  const handleAddSuggestionEdge = async (s: RelationshipSuggestion) => {
+    try {
+      const res = await apiClient.post<ApiEdge>(
+        `/api/mindmaps/${mapId}/edges`,
+        { source_id: s.source_id, target_id: s.target_id },
+      )
+      setEdges((prev) =>
+        addEdge({ source: s.source_id, target: s.target_id, id: res.data.id }, prev),
+      )
+      setSuggestions((prev) => prev.filter((x) => x !== s))
+    } catch (err) {
+      console.error('Failed to add suggested edge', err)
+    }
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -303,6 +388,12 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
         )}
         <button onClick={handleAddNode} style={btnStyle}>+ New Node</button>
         <button
+          onClick={() => setSidebarOpen((o) => !o)}
+          style={{ ...btnStyle, background: sidebarOpen ? '#4f46e5' : '#6366f1' }}
+        >
+          ✨ AI Suggest
+        </button>
+        <button
           onClick={onLogout}
           style={{ ...btnStyle, background: '#e5e7eb', color: '#374151' }}
         >
@@ -310,27 +401,137 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
         </button>
       </div>
 
-      {/* Canvas */}
-      <div style={{ flex: 1 }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeDragStop={handleNodeDragStop}
-          onNodeDoubleClick={handleNodeDoubleClick}
-          onConnect={handleConnect}
-          deleteKeyCode={null}
-          fitView
-        >
-          <Background />
-          <Controls />
-        </ReactFlow>
+      {/* Canvas + Sidebar row */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* Canvas */}
+        <div style={{ flex: 1 }}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeDragStop={handleNodeDragStop}
+            onNodeDoubleClick={handleNodeDoubleClick}
+            onConnect={handleConnect}
+            deleteKeyCode={null}
+            fitView
+          >
+            <Background />
+            <Controls />
+          </ReactFlow>
+        </div>
+
+        {/* AI Sidebar */}
+        {sidebarOpen && (
+          <div style={sidebarStyle}>
+            {/* ── Relationship Suggestions ── */}
+            <div style={sidebarSectionStyle}>
+              <h3 style={sidebarHeadingStyle}>Relationship Suggestions</h3>
+              <button
+                onClick={handleSuggest}
+                disabled={loadingSuggestions}
+                style={{ ...btnStyle, width: '100%', marginBottom: 10 }}
+              >
+                {loadingSuggestions ? <Spinner /> : 'Find Connections'}
+              </button>
+              {suggestions.length === 0 && !loadingSuggestions && (
+                <p style={emptyTextStyle}>Click "Find Connections" to get AI suggestions.</p>
+              )}
+              {suggestions.map((s, i) => (
+                <div key={i} style={cardStyle}>
+                  <div style={cardRowStyle}>
+                    <span style={nodePillStyle}>{nodeById.get(s.source_id) ?? s.source_id}</span>
+                    <span style={{ color: '#9ca3af', fontSize: 12 }}>→</span>
+                    <span style={nodePillStyle}>{nodeById.get(s.target_id) ?? s.target_id}</span>
+                  </div>
+                  <p style={cardReasonStyle}>{s.reason}</p>
+                  <button
+                    onClick={() => handleAddSuggestionEdge(s)}
+                    style={{ ...btnStyle, fontSize: 12, padding: '4px 10px' }}
+                  >
+                    Add Edge
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Semantic Clusters ── */}
+            <div style={sidebarSectionStyle}>
+              <h3 style={sidebarHeadingStyle}>Semantic Clusters</h3>
+              <button
+                onClick={handleCluster}
+                disabled={loadingClusters}
+                style={{ ...btnStyle, width: '100%', marginBottom: 10 }}
+              >
+                {loadingClusters ? <Spinner /> : 'Cluster Nodes'}
+              </button>
+              {clusters.length === 0 && !loadingClusters && (
+                <p style={emptyTextStyle}>Click "Cluster Nodes" to group by topic.</p>
+              )}
+              {clusters.length > 0 && (
+                <button
+                  onClick={handleClearClusters}
+                  style={{ ...btnStyle, background: '#e5e7eb', color: '#374151', width: '100%', marginBottom: 10 }}
+                >
+                  Clear Clusters
+                </button>
+              )}
+              {clusters.map((c, ci) => (
+                <div
+                  key={ci}
+                  style={{ ...cardStyle, borderLeft: `3px solid ${CLUSTER_DOT_COLORS[ci % CLUSTER_DOT_COLORS.length]}` }}
+                >
+                  <p style={{ margin: '0 0 6px', fontWeight: 600, fontSize: 13, color: '#111827' }}>
+                    {c.cluster_name}
+                  </p>
+                  {c.node_ids.map((id) => (
+                    <div key={id} style={clusterNodeRowStyle}>
+                      <span
+                        style={{
+                          ...clusterDotStyle,
+                          background: CLUSTER_DOT_COLORS[ci % CLUSTER_DOT_COLORS.length],
+                        }}
+                      />
+                      <span style={{ fontSize: 12, color: '#374151' }}>
+                        {nodeById.get(id) ?? id}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
 }
+
+// ── Spinner ───────────────────────────────────────────────────────────────────
+
+function Spinner() {
+  return (
+    <span style={{
+      display: 'inline-block',
+      width: 14,
+      height: 14,
+      border: '2px solid rgba(255,255,255,0.4)',
+      borderTopColor: '#fff',
+      borderRadius: '50%',
+      animation: 'spin 0.7s linear infinite',
+      verticalAlign: 'middle',
+    }} />
+  )
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// 6-color palette: purple, teal, coral, amber, blue, green
+// BG: soft pastels applied to canvas nodes.
+// DOT: saturated versions used for sidebar legend dots.
+const CLUSTER_BG_COLORS = ['#ede9fe', '#ccfbf1', '#fee2e2', '#fef3c7', '#dbeafe', '#dcfce7']
+const CLUSTER_DOT_COLORS = ['#7c3aed', '#0d9488', '#dc2626', '#d97706', '#2563eb', '#16a34a']
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
@@ -402,4 +603,87 @@ const rfNodeInputStyle: React.CSSProperties = {
   border: '1px solid #6366f1',
   borderRadius: 3,
   outline: 'none',
+}
+
+const sidebarStyle: React.CSSProperties = {
+  width: 300,
+  flexShrink: 0,
+  overflowY: 'auto',
+  background: '#f9fafb',
+  borderLeft: '1px solid #e5e7eb',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 0,
+}
+
+const sidebarSectionStyle: React.CSSProperties = {
+  padding: '14px 14px 10px',
+  borderBottom: '1px solid #e5e7eb',
+}
+
+const sidebarHeadingStyle: React.CSSProperties = {
+  margin: '0 0 10px',
+  fontSize: 13,
+  fontWeight: 700,
+  color: '#374151',
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+}
+
+const cardStyle: React.CSSProperties = {
+  background: '#fff',
+  border: '1px solid #e5e7eb',
+  borderRadius: 8,
+  padding: '10px 12px',
+  marginBottom: 8,
+}
+
+const cardRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  marginBottom: 6,
+  flexWrap: 'wrap',
+}
+
+const nodePillStyle: React.CSSProperties = {
+  background: '#ede9fe',
+  color: '#4f46e5',
+  borderRadius: 4,
+  padding: '2px 6px',
+  fontSize: 12,
+  fontWeight: 500,
+  maxWidth: 100,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const cardReasonStyle: React.CSSProperties = {
+  margin: '0 0 8px',
+  fontSize: 12,
+  color: '#6b7280',
+  lineHeight: 1.4,
+}
+
+const emptyTextStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 12,
+  color: '#9ca3af',
+  textAlign: 'center',
+  padding: '8px 0',
+}
+
+const clusterNodeRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  marginBottom: 4,
+}
+
+const clusterDotStyle: React.CSSProperties = {
+  width: 8,
+  height: 8,
+  borderRadius: '50%',
+  flexShrink: 0,
 }
