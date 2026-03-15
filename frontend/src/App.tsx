@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import Landing from './pages/Landing'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import MindMapCanvas from './components/MindMapCanvas'
@@ -14,17 +15,23 @@ function getUserId(token: string): string {
   }
 }
 
-type View = 'login' | 'register'
+type View = 'landing' | 'login' | 'register'
 
 function navigate(to: View) {
-  window.history.pushState({}, '', to === 'register' ? '/register' : '/login')
+  const paths: Record<View, string> = { landing: '/', login: '/login', register: '/register' }
+  window.history.pushState({}, '', paths[to])
+}
+
+function initialView(): View {
+  const path = window.location.pathname
+  if (path === '/register') return 'register'
+  if (path === '/login') return 'login'
+  return 'landing'
 }
 
 export default function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
-  const [view, setView] = useState<View>(() =>
-    window.location.pathname === '/register' ? 'register' : 'login',
-  )
+  const [view, setView] = useState<View>(initialView)
   const [mapId, setMapId] = useState<string | null>(null)
   const [mapTitle, setMapTitle] = useState('')
   const [loading, setLoading] = useState(false)
@@ -65,6 +72,7 @@ export default function App() {
     setToken(null)
     setMapId(null)
     setMapTitle('')
+    goTo('landing')
   }
 
   const handleCreateMap = async () => {
@@ -90,7 +98,15 @@ export default function App() {
         />
       )
     }
-    return <Login onSuccess={handleLogin} onNavigateToRegister={() => goTo('register')} />
+    if (view === 'login') {
+      return <Login onSuccess={handleLogin} onNavigateToRegister={() => goTo('register')} />
+    }
+    return (
+      <Landing
+        onNavigateToLogin={() => goTo('login')}
+        onNavigateToRegister={() => goTo('register')}
+      />
+    )
   }
 
   if (loading) {
