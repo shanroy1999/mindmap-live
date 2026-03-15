@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -9,7 +11,7 @@ class NodeBase(BaseModel):
     """Shared node fields."""
 
     label: str
-    description: str | None = None
+    description: Optional[str] = None
     x: float = 0.0
     y: float = 0.0
 
@@ -21,10 +23,10 @@ class NodeCreate(NodeBase):
 class NodeUpdate(BaseModel):
     """Schema for partial node updates (all fields optional)."""
 
-    label: str | None = None
-    description: str | None = None
-    x: float | None = None
-    y: float | None = None
+    label: Optional[str] = None
+    description: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
 
 
 class NodeRead(NodeBase):

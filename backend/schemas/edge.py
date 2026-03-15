@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -10,7 +12,7 @@ class EdgeBase(BaseModel):
 
     source_id: str
     target_id: str
-    label: str | None = None
+    label: Optional[str] = None
 
 
 class EdgeCreate(EdgeBase):
@@ -20,7 +22,7 @@ class EdgeCreate(EdgeBase):
 class EdgeUpdate(BaseModel):
     """Schema for partial edge updates."""
 
-    label: str | None = None
+    label: Optional[str] = None
 
 
 class EdgeRead(EdgeBase):

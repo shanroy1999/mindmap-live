@@ -1,5 +1,7 @@
 """Business logic for user operations."""
 
+from typing import Optional
+
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
@@ -9,12 +11,12 @@ from schemas.user import UserCreate
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def get_by_id(db: Session, user_id: str) -> User | None:
+def get_by_id(db: Session, user_id: str) -> Optional[User]:
     """Return a user by ID, or None if not found."""
     return db.query(User).filter(User.id == user_id).first()
 
 
-def get_by_email(db: Session, email: str) -> User | None:
+def get_by_email(db: Session, email: str) -> Optional[User]:
     """Return a user by email address, or None if not found."""
     return db.query(User).filter(User.email == email).first()
 

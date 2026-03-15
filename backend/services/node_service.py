@@ -1,5 +1,7 @@
 """Business logic for node operations."""
 
+from typing import Optional
+
 from sqlalchemy.orm import Session
 
 from models.node import Node
@@ -11,7 +13,7 @@ def get_all(db: Session) -> list[Node]:
     return db.query(Node).all()
 
 
-def get_by_id(db: Session, node_id: str) -> Node | None:
+def get_by_id(db: Session, node_id: str) -> Optional[Node]:
     """Return a single node by its ID, or None if not found."""
     return db.query(Node).filter(Node.id == node_id).first()
 
@@ -25,7 +27,7 @@ def create(db: Session, payload: NodeCreate) -> Node:
     return node
 
 
-def update(db: Session, node_id: str, payload: NodeUpdate) -> Node | None:
+def update(db: Session, node_id: str, payload: NodeUpdate) -> Optional[Node]:
     """Apply a partial update to an existing node.
 
     Returns the updated node, or None if the node was not found.

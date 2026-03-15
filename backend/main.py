@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from db.database import engine, AsyncSessionLocal
-from routers import edges, nodes, users
+from routers import auth, edges, mindmaps, nodes, users
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -70,18 +70,12 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-# NOTE: These scaffold routers use synchronous Sessions and must be migrated
-# to AsyncSession before they will function correctly with the async DB layer.
-# New routers should use `AsyncSession = Depends(get_db)` from db.database.
 
-app.include_router(nodes.router, prefix="/api/nodes", tags=["nodes"])
-app.include_router(edges.router, prefix="/api/edges", tags=["edges"])
-app.include_router(users.router, prefix="/api/users", tags=["users"])
-
-# Routers to be implemented (uncomment as each is created):
-# from routers import auth, maps
-# app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-# app.include_router(maps.router, prefix="/api/maps", tags=["maps"])
+app.include_router(auth.router,     prefix="/api/auth",     tags=["auth"])
+app.include_router(mindmaps.router, prefix="/api/mindmaps", tags=["mindmaps"])
+app.include_router(nodes.router,    prefix="/api/nodes",    tags=["nodes"])
+app.include_router(edges.router,    prefix="/api/edges",    tags=["edges"])
+app.include_router(users.router,    prefix="/api/users",    tags=["users"])
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

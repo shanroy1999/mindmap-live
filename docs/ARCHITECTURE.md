@@ -672,3 +672,98 @@ Sticky sessions (affinity by `map_id` or session cookie) are optional but reduce
 | Optimistic UI | Client applies changes before WS confirmation | Eliminates perceived latency on fast connections |
 | `updated_at` | Database trigger | Prevents application bugs from leaving stale timestamps |
 | No hardcoded secrets | Environment variables only | Follows 12-factor app principles |
+
+---
+
+## 7. Database Migrations
+
+### Why Alembic instead of `create_all()`
+
+SQLAlchemy's `Base.metadata.create_all()` is convenient for prototyping, but
+it is **not suitable for production** because it can only create tables that do
+not exist yet — it cannot alter, rename, or drop columns, change constraints,
+or update indexes in an already-running database.  Every production deployment
+that changes the schema requires a coordinated migration step.
+
+Alembic provides:
+
+| Feature | `create_all()` | Alembic |
+|---|---|---|
+| Create tables from scratch | ✅ | ✅ |
+| Add / remove columns | ❌ | ✅ |
+| Rename columns or tables | ❌ | ✅ |
+| Change column types | ❌ | ✅ |
+| Manage indexes and constraints | ❌ | ✅ |
+| Rollback a bad deployment | ❌ | ✅ (`downgrade`) |
+| Version-controlled history | ❌ | ✅ (`versions/`) |
+| Preview SQL before applying | ❌ | ✅ (`--sql`) |
+| CI/CD integration | ❌ | ✅ |
+
+### Project layout
+
+```
+backend/
+├── alembic.ini                   # Alembic config (script_location, logging)
+└── alembic/
+    ├── env.py                    # Runtime config: DB URL, target_metadata
+    ├── script.py.mako            # Template for generated migration files
+    └── versions/
+        └── 20240315_a1b2c3d4e5f6_create_initial_schema.py
+```
+
+### Configuration
+
+`alembic.ini` intentionally leaves `sqlalchemy.url` blank.  `alembic/env.py`
+reads `DATABASE_URL` from the environment (or `backend/.env`) at runtime and
+normalises it to `postgresql+asyncpg://` so the same connection string works
+for both the FastAPI app and Alembic.
+
+Alembic runs migrations **synchronously** inside `connection.run_sync()` even
+though the application uses asyncpg — this lets Alembic use its standard
+synchronous DDL API while the transport layer remains async.
+
+### Common commands
+
+```bash
+# Apply all pending migrations (run from backend/).
+alembic upgrade head
+
+# Roll back the most recent migration.
+alembic downgrade -1
+
+# Show the current revision applied to the database.
+alembic current
+
+# Show all revisions and which one is current.
+alembic history --verbose
+
+# Generate a new migration from ORM model changes.
+alembic revision --autogenerate -m "add node_type column"
+
+# Preview the SQL that upgrade head would run (no DB connection needed).
+alembic upgrade head --sql > upgrade.sql
+```
+
+### Writing migrations
+
+Alembic can autogenerate a migration skeleton from the diff between the live
+database schema and `Base.metadata`, but **always review the generated file**
+before committing:
+
+- Autogenerate does not detect server defaults, triggers, or custom SQL.
+- Add raw SQL with `op.execute()` for triggers, functions, or extensions.
+- Drop tables/indexes in reverse dependency order in `downgrade()`.
+- Create the `map_role` ENUM type before any table that references it; drop
+  it after all tables that reference it are dropped.
+
+### First migration
+
+`20240315_a1b2c3d4e5f6_create_initial_schema.py` creates:
+
+- `map_role` ENUM type (`owner`, `editor`, `viewer`)
+- `users` — email unique index
+- `maps` — `owner_id` index
+- `map_members` — composite PK (`map_id`, `user_id`), `user_id` index
+- `nodes` — `(map_id)` and `(map_id, created_at)` indexes
+- `edges` — `no_self_loops` CHECK, `unique_directed_edge` UNIQUE, three indexes
+- `set_updated_at()` PL/pgSQL function + triggers on `maps` and `nodes`

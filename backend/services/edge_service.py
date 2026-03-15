@@ -1,5 +1,7 @@
 """Business logic for edge operations."""
 
+from typing import Optional
+
 from sqlalchemy.orm import Session
 
 from models.edge import Edge
@@ -11,7 +13,7 @@ def get_all(db: Session) -> list[Edge]:
     return db.query(Edge).all()
 
 
-def get_by_id(db: Session, edge_id: str) -> Edge | None:
+def get_by_id(db: Session, edge_id: str) -> Optional[Edge]:
     """Return a single edge by its ID, or None if not found."""
     return db.query(Edge).filter(Edge.id == edge_id).first()
 
@@ -25,7 +27,7 @@ def create(db: Session, payload: EdgeCreate) -> Edge:
     return edge
 
 
-def update(db: Session, edge_id: str, payload: EdgeUpdate) -> Edge | None:
+def update(db: Session, edge_id: str, payload: EdgeUpdate) -> Optional[Edge]:
     """Apply a partial update to an existing edge.
 
     Returns the updated edge, or None if the edge was not found.

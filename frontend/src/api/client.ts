@@ -1,26 +1,17 @@
-/** Thin REST API client. All requests go through Vite's dev proxy in development. */
+/** Axios API client — attaches JWT from localStorage to every request. */
 
-const API_BASE = import.meta.env.VITE_API_URL ?? ''
+import axios from 'axios'
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  if (!response.ok) {
-    throw new Error(`API error ${response.status}: ${response.statusText}`)
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_URL ?? '',
+})
+
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
   }
-  return response.json() as Promise<T>
-}
+  return config
+})
 
-export const api = {
-  get: <T>(path: string): Promise<T> => request<T>(path),
-
-  post: <T>(path: string, body: unknown): Promise<T> =>
-    request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
-
-  patch: <T>(path: string, body: unknown): Promise<T> =>
-    request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
-
-  delete: <T>(path: string): Promise<T> => request<T>(path, { method: 'DELETE' }),
-}
+export default apiClient

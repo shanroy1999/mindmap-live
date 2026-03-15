@@ -10,7 +10,7 @@ UUID fields are serialised as strings in JSON automatically by Pydantic v2.
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -61,8 +61,8 @@ class UserRead(BaseModel):
 class UserUpdate(BaseModel):
     """Fields a user may change on their own account."""
 
-    display_name: str | None = Field(None, min_length=1, max_length=100)
-    password: str | None = Field(None, min_length=8)
+    display_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    password: Optional[str] = Field(None, min_length=8)
 
 
 # ── MindMap ───────────────────────────────────────────────────────────────────
@@ -71,8 +71,9 @@ class UserUpdate(BaseModel):
 class MindMapCreate(BaseModel):
     """Fields required to create a new map workspace."""
 
+    owner_id: uuid.UUID
     title: str = Field(..., min_length=1, max_length=200)
-    description: str | None = None
+    description: Optional[str] = None
     is_public: bool = False
 
 
@@ -82,7 +83,7 @@ class MindMapRead(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID
     title: str
-    description: str | None
+    description: Optional[str]
     is_public: bool
     created_at: datetime
     updated_at: datetime
@@ -103,9 +104,9 @@ class MindMapWithRole(MindMapRead):
 class MindMapUpdate(BaseModel):
     """Fields that may be updated on an existing map."""
 
-    title: str | None = Field(None, min_length=1, max_length=200)
-    description: str | None = None
-    is_public: bool | None = None
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = None
+    is_public: Optional[bool] = None
 
 
 # ── Map membership ────────────────────────────────────────────────────────────
@@ -143,7 +144,7 @@ class NodeCreate(BaseModel):
     """Fields required to place a new node on the canvas."""
 
     label: str = Field(..., min_length=1, max_length=200)
-    description: str | None = None
+    description: Optional[str] = None
     color: str = Field(
         "#6366f1",
         pattern=r"^#[0-9a-fA-F]{6}$",
@@ -159,11 +160,11 @@ class NodeRead(BaseModel):
     id: uuid.UUID
     map_id: uuid.UUID
     label: str
-    description: str | None
+    description: Optional[str]
     color: str
     x: float
     y: float
-    created_by: uuid.UUID | None
+    created_by: Optional[uuid.UUID]
     created_at: datetime
     updated_at: datetime
 
@@ -173,11 +174,11 @@ class NodeRead(BaseModel):
 class NodeUpdate(BaseModel):
     """Partial update fields for a node — all optional."""
 
-    label: str | None = Field(None, min_length=1, max_length=200)
-    description: str | None = None
-    color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
-    x: float | None = None
-    y: float | None = None
+    label: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = None
+    color: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    x: Optional[float] = None
+    y: Optional[float] = None
 
 
 # ── Edge ──────────────────────────────────────────────────────────────────────
@@ -188,7 +189,7 @@ class EdgeCreate(BaseModel):
 
     source_id: uuid.UUID
     target_id: uuid.UUID
-    label: str | None = None
+    label: Optional[str] = None
 
     def validate_no_self_loop(self) -> None:
         """Raise ValueError if source and target are the same node."""
@@ -203,8 +204,8 @@ class EdgeRead(BaseModel):
     map_id: uuid.UUID
     source_id: uuid.UUID
     target_id: uuid.UUID
-    label: str | None
-    created_by: uuid.UUID | None
+    label: Optional[str]
+    created_by: Optional[uuid.UUID]
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -213,7 +214,7 @@ class EdgeRead(BaseModel):
 class EdgeUpdate(BaseModel):
     """Partial update fields for an edge."""
 
-    label: str | None = None
+    label: Optional[str] = None
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────

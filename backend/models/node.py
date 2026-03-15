@@ -3,6 +3,8 @@
 import uuid
 from datetime import datetime
 
+from typing import Optional
+
 from sqlalchemy import DateTime, Float, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,7 +20,7 @@ class Node(Base):
         String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     label: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     x: Mapped[float] = mapped_column(Float, default=0.0)
     y: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

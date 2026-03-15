@@ -10,6 +10,7 @@ Schema rationale: docs/ARCHITECTURE.md § 2 "Graph Data Model".
 import enum
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -107,7 +108,7 @@ class MindMap(Base):
         nullable=False,
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_public: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("FALSE")
     )
@@ -165,7 +166,7 @@ class MapMember(Base):
         primary_key=True,
     )
     role: Mapped[MapRole] = mapped_column(
-        SAEnum(MapRole, name="map_role", create_type=True),
+        SAEnum(MapRole, name="map_role", create_type=False),
         nullable=False,
         default=MapRole.viewer,
     )
@@ -206,7 +207,7 @@ class Node(Base):
         nullable=False,
     )
     label: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Hex colour string, e.g. "#6366f1". Validated to #RRGGBB format in schemas.
     color: Mapped[str] = mapped_column(
         String(7), nullable=False, server_default=text("'#6366f1'")
@@ -217,7 +218,7 @@ class Node(Base):
     y: Mapped[float] = mapped_column(
         Double(), nullable=False, server_default=text("0")
     )
-    created_by: Mapped[uuid.UUID | None] = mapped_column(
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
@@ -234,7 +235,7 @@ class Node(Base):
 
     # Relationships
     map: Mapped["MindMap"] = relationship(back_populates="nodes", lazy="raise")
-    creator: Mapped["User | None"] = relationship(
+    creator: Mapped[Optional["User"]] = relationship(
         foreign_keys=[created_by], lazy="raise"
     )
 
@@ -283,8 +284,8 @@ class Edge(Base):
         ForeignKey("nodes.id", ondelete="CASCADE"),
         nullable=False,
     )
-    label: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_by: Mapped[uuid.UUID | None] = mapped_column(
+    label: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
@@ -297,6 +298,6 @@ class Edge(Base):
     map: Mapped["MindMap"] = relationship(back_populates="edges", lazy="raise")
     source: Mapped["Node"] = relationship(foreign_keys=[source_id], lazy="raise")
     target: Mapped["Node"] = relationship(foreign_keys=[target_id], lazy="raise")
-    creator: Mapped["User | None"] = relationship(
+    creator: Mapped[Optional["User"]] = relationship(
         foreign_keys=[created_by], lazy="raise"
     )

@@ -26,7 +26,7 @@ import os
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Optional
 from unittest.mock import AsyncMock
 
 import pytest
@@ -287,7 +287,7 @@ def make_map(db_session: AsyncSession):
     async def factory(
         owner: User,
         title: str = "Test Map",
-        description: str | None = None,
+        description: Optional[str] = None,
         is_public: bool = False,
     ) -> MindMap:
         mindmap = MindMap(
@@ -310,11 +310,11 @@ def make_node(db_session: AsyncSession):
     async def factory(
         mindmap: MindMap,
         label: str = "Concept A",
-        description: str | None = None,
+        description: Optional[str] = None,
         color: str = "#6366f1",
         x: float = 0.0,
         y: float = 0.0,
-        created_by: User | None = None,
+        created_by: Optional[User] = None,
     ) -> Node:
         node = Node(
             map_id=mindmap.id,
@@ -340,8 +340,8 @@ def make_edge(db_session: AsyncSession):
         mindmap: MindMap,
         source: Node,
         target: Node,
-        label: str | None = None,
-        created_by: User | None = None,
+        label: Optional[str] = None,
+        created_by: Optional[User] = None,
     ) -> Edge:
         edge = Edge(
             map_id=mindmap.id,
