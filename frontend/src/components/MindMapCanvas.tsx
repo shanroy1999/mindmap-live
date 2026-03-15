@@ -44,7 +44,7 @@ function EditableNode({ id, data }: NodeProps) {
 
   return (
     <div style={rfNodeStyle}>
-      <Handle type="target" position={Position.Top} />
+      <Handle type="target" position={Position.Top} style={handleStyle} />
       {editing ? (
         <input
           autoFocus
@@ -61,7 +61,7 @@ function EditableNode({ id, data }: NodeProps) {
       ) : (
         <span>{label}</span>
       )}
-      <Handle type="source" position={Position.Bottom} />
+      <Handle type="source" position={Position.Bottom} style={handleStyle} />
     </div>
   )
 }
@@ -194,6 +194,7 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
 
   const handleConnect = useCallback(
     async (params: Connection) => {
+      console.log('[handleConnect] fired', params)
       if (!params.source || !params.target) return
       try {
         const res = await apiClient.post<ApiEdge>(
@@ -242,15 +243,14 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
   // ── Feature 4: prompt for label when creating a node ───────────────────────
 
   const handleAddNode = async () => {
-    const label = window.prompt('Node label:')
-    if (!label?.trim()) return
     try {
       const res = await apiClient.post<ApiNode>(`/api/mindmaps/${mapId}/nodes`, {
-        label: label.trim(),
+        label: 'New Node',
         x: 100 + Math.random() * 400,
         y: 100 + Math.random() * 300,
       })
-      setNodes((prev) => [...prev, toRFNode(res.data, stableCommit)])
+      const node = toRFNode(res.data, stableCommit)
+      setNodes((prev) => [...prev, { ...node, data: { ...node.data, editing: true } }])
     } catch (err) {
       console.error('Failed to create node', err)
     }
@@ -384,6 +384,15 @@ const rfNodeStyle: React.CSSProperties = {
   fontSize: 12,
   textAlign: 'center',
   minWidth: 60,
+}
+
+// Always-visible connection handles — larger dot with a border so they stand out.
+const handleStyle: React.CSSProperties = {
+  width: 10,
+  height: 10,
+  background: '#6366f1',
+  border: '2px solid #fff',
+  borderRadius: '50%',
 }
 
 const rfNodeInputStyle: React.CSSProperties = {
