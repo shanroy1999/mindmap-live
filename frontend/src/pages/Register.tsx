@@ -18,14 +18,14 @@ export default function Register({ onSuccess, onNavigateToLogin }: Props) {
     e.preventDefault()
     setError(null)
     setLoading(true)
+    const body = { email, display_name: displayName, password }
+    console.log('[Register] request body:', body)
     try {
-      await apiClient.post<User>('/api/users/', {
-        email,
-        display_name: displayName,
-        password,
-      })
+      const res = await apiClient.post<User>('/api/users/', body)
+      console.log('[Register] response:', res.status, res.data)
       onSuccess()
     } catch (err: unknown) {
+      console.error('[Register] error:', err)
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setError(typeof msg === 'string' ? msg : 'Registration failed. Please try again.')
