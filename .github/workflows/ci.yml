@@ -59,7 +59,11 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm install --ignore-scripts=false
+        env:
+          npm_config_optional: "true"
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install --prefer-offline=false --ignore-scripts=false
 
       - name: Build
         working-directory: frontend
