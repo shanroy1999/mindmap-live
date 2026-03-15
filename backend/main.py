@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from db.database import engine, AsyncSessionLocal
-from routers import auth, edges, mindmaps, nodes, users
+from routers import auth, edges, mindmaps, nodes, users, websocket
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -76,6 +76,7 @@ app.include_router(mindmaps.router, prefix="/api/mindmaps", tags=["mindmaps"])
 app.include_router(nodes.router,    prefix="/api/nodes",    tags=["nodes"])
 app.include_router(edges.router,    prefix="/api/edges",    tags=["edges"])
 app.include_router(users.router,    prefix="/api/users",    tags=["users"])
+app.include_router(websocket.router, prefix="/ws",           tags=["websocket"])
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
