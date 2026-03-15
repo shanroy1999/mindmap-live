@@ -7,6 +7,7 @@ import ReactFlow, {
   Position,
   useNodesState,
   useEdgesState,
+  useStore,
   type Connection,
   type Node as RFNode,
   type Edge as RFEdge,
@@ -42,6 +43,20 @@ interface ContextMenu {
   x: number
   y: number
   nodeId: string
+}
+
+interface RemoteCursor {
+  userId: string
+  displayName: string
+  x: number
+  y: number
+  color: string
+}
+
+interface OnlineUser {
+  userId: string
+  displayName: string
+  color: string
 }
 
 interface Props {
@@ -119,6 +134,102 @@ function EditableNode({ id, data, selected }: NodeProps) {
 // Stable object — must not be recreated on each render.
 const nodeTypes = { editable: EditableNode }
 
+// ── Presence overlay ──────────────────────────────────────────────────────────
+// Rendered as a child of <ReactFlow> so it has access to the internal viewport
+// transform via useStore.  Absolute-positioned cursors sit outside the
+// .react-flow__viewport layer so they are unaffected by its CSS transform —
+// we manually compute screen coords from canvas coords + the stored transform.
+
+interface PresenceLayerProps {
+  cursors: RemoteCursor[]
+  containerRef: React.RefObject<HTMLDivElement>
+  sendCursorMove: (x: number, y: number) => void
+}
+
+function PresenceLayer({ cursors, containerRef, sendCursorMove }: PresenceLayerProps) {
+  // transform = [panX, panY, zoom] — updates whenever the user pans or zooms.
+  const transform = useStore(
+    (s: { transform: [number, number, number] }) => s.transform,
+  )
+
+  // Keep transform in a ref so the mousemove listener reads the latest value
+  // without needing to be re-attached on every pan/zoom.
+  const transformRef = useRef(transform)
+  useEffect(() => { transformRef.current = transform }, [transform])
+
+  // Attach a single mousemove listener to the canvas wrapper div.
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const handleMove = (e: MouseEvent) => {
+      const rect = container.getBoundingClientRect()
+      const [panX, panY, zoom] = transformRef.current
+      sendCursorMove(
+        (e.clientX - rect.left - panX) / zoom,
+        (e.clientY - rect.top - panY) / zoom,
+      )
+    }
+    container.addEventListener('mousemove', handleMove)
+    return () => container.removeEventListener('mousemove', handleMove)
+  }, [containerRef, sendCursorMove])
+
+  return (
+    <>
+      {cursors.map((c) => {
+        const [panX, panY, zoom] = transform
+        const sx = c.x * zoom + panX
+        const sy = c.y * zoom + panY
+        return (
+          <div
+            key={c.userId}
+            style={{
+              position: 'absolute',
+              left: sx,
+              top: sy,
+              pointerEvents: 'none',
+              zIndex: 1000,
+            }}
+          >
+            <svg
+              width="16"
+              height="20"
+              viewBox="0 0 16 20"
+              style={{ display: 'block', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))' }}
+            >
+              <path
+                d="M0,0 L0,16 L4.5,12 L7.5,18.5 L9.5,17.5 L6.5,11 L12,11 Z"
+                fill={c.color}
+                stroke="#18181b"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <div
+              style={{
+                position: 'absolute',
+                left: 14,
+                top: 0,
+                background: c.color,
+                color: '#fff',
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '2px 6px',
+                borderRadius: 4,
+                whiteSpace: 'nowrap',
+                fontFamily: 'system-ui, sans-serif',
+                lineHeight: '14px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
+              }}
+            >
+              {c.displayName}
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function toRFNode(
@@ -158,6 +269,11 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
   const [typePickerOpen, setTypePickerOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
   const typePickerRef = useRef<HTMLDivElement>(null)
+
+  // ── Presence state ─────────────────────────────────────────────────────────
+  const [remoteCursors, setRemoteCursors] = useState<Map<string, RemoteCursor>>(new Map())
+  const [onlineUsers, setOnlineUsers] = useState<Map<string, OnlineUser>>(new Map())
+  const canvasContainerRef = useRef<HTMLDivElement>(null)
 
   // Keep a ref so the stable `stableCommit` wrapper below always calls the
   // latest version of `commitEdit` without needing to be recreated.
@@ -218,20 +334,53 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
     return () => document.removeEventListener('mousedown', handleMouseDown)
   }, [typePickerOpen])
 
-  // Apply incoming node_moved events from other users.
+  // Apply incoming events from other users.
   const handleEvent = useCallback(
     (event: Record<string, unknown>) => {
-      if (event.type === 'node_moved') {
+      const type = event.type as string
+      if (type === 'node_moved') {
         const { nodeId, x, y } = event as unknown as NodeMovedEvent
         setNodes((prev) =>
           prev.map((n) => (n.id === nodeId ? { ...n, position: { x, y } } : n)),
         )
+      } else if (type === 'cursor_move') {
+        const { userId, displayName, x, y, color } = event as {
+          userId: string; displayName: string; x: number; y: number; color: string
+        }
+        setRemoteCursors((prev) => {
+          const next = new Map(prev)
+          next.set(userId, { userId, displayName, x, y, color })
+          return next
+        })
+        // Ensure they appear in the online list even before a user_joined event.
+        setOnlineUsers((prev) => {
+          if (prev.has(userId)) return prev
+          const next = new Map(prev)
+          next.set(userId, { userId, displayName, color })
+          return next
+        })
+      } else if (type === 'user_joined') {
+        const { userId, displayName, color } = event as {
+          userId: string; displayName: string; color: string
+        }
+        setOnlineUsers((prev) => {
+          const next = new Map(prev)
+          next.set(userId, { userId, displayName, color })
+          return next
+        })
+      } else if (type === 'user_left') {
+        const userId = event.userId as string
+        setRemoteCursors((prev) => { const next = new Map(prev); next.delete(userId); return next })
+        setOnlineUsers((prev) => { const next = new Map(prev); next.delete(userId); return next })
+      } else if (type === 'room_state') {
+        const users = event.users as OnlineUser[]
+        setOnlineUsers(new Map(users.map((u) => [u.userId, u])))
       }
     },
     [setNodes],
   )
 
-  const { sendEvent } = useMapSync(mapId, token, { onEvent: handleEvent })
+  const { sendEvent, sendCursorMove } = useMapSync(mapId, token, { onEvent: handleEvent })
 
   // ── Feature: drag to move ───────────────────────────────────────────────────
 
@@ -540,6 +689,35 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
           ✨ AI Suggest
         </button>
         <div className="flex-1" />
+
+        {/* Online users indicator */}
+        {onlineUsers.size > 0 && (
+          <div className="flex items-center gap-1.5">
+            {[...onlineUsers.values()].slice(0, 5).map((u) => (
+              <div
+                key={u.userId}
+                title={u.displayName}
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border select-none"
+                style={{
+                  borderColor: `${u.color}50`,
+                  background: `${u.color}20`,
+                  color: u.color,
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full shrink-0 animate-pulse"
+                  style={{ background: u.color }}
+                />
+                <span className="max-w-[64px] truncate">{u.displayName}</span>
+              </div>
+            ))}
+            {onlineUsers.size > 5 && (
+              <span className="text-[10px] text-white/40">+{onlineUsers.size - 5}</span>
+            )}
+          </div>
+        )}
+
+        <div className="h-4 w-px bg-white/10" />
         <button
           onClick={onLogout}
           className="px-3 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-white/60 hover:text-white border border-white/10 rounded-md transition-colors cursor-pointer"
@@ -551,7 +729,7 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
       {/* Canvas + Sidebar row */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Canvas — bg-color set on the wrapper; Background component colours the dot pattern */}
-        <div className="flex-1 bg-[#09090b]">
+        <div className="flex-1 bg-[#09090b]" ref={canvasContainerRef}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -568,6 +746,11 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
           >
             <Background color="#27272a" />
             <Controls />
+            <PresenceLayer
+              cursors={[...remoteCursors.values()]}
+              containerRef={canvasContainerRef}
+              sendCursorMove={sendCursorMove}
+            />
           </ReactFlow>
         </div>
 

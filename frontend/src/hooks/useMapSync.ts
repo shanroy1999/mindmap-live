@@ -21,6 +21,8 @@ interface UseMapSyncOptions {
 interface UseMapSyncResult {
   /** Send a JSON event to all other clients on this map. */
   sendEvent: (event: JsonObject) => void
+  /** Send a cursor_move event, throttled to once every 50 ms. */
+  sendCursorMove: (x: number, y: number) => void
 }
 
 /**
@@ -89,5 +91,18 @@ export function useMapSync(
     }
   }, [])
 
-  return { sendEvent }
+  // Timestamp of the last cursor_move sent — used for 50 ms throttle.
+  const lastCursorRef = useRef(0)
+
+  const sendCursorMove = useCallback((x: number, y: number) => {
+    const now = Date.now()
+    if (now - lastCursorRef.current < 50) return
+    lastCursorRef.current = now
+    const ws = wsRef.current
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'cursor_move', x, y }))
+    }
+  }, [])
+
+  return { sendEvent, sendCursorMove }
 }
