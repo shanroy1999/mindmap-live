@@ -43,11 +43,20 @@ app = FastAPI(
 
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-# FRONTEND_ORIGIN accepts a comma-separated list for multi-origin setups,
-# e.g. "http://localhost:5173,https://mindmaplive.example.com"
+# Hard-coded baseline origins (always allowed).
+_BASE_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://mindmap-live.vercel.app",
+]
 
-_raw_origins = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173")
-_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+# CORS_ORIGINS: optional comma-separated list for runtime overrides, e.g.
+#   CORS_ORIGINS="https://staging.example.com,https://preview.example.com"
+# FRONTEND_ORIGIN is kept for backwards compatibility.
+_extra = os.environ.get("CORS_ORIGINS", os.environ.get("FRONTEND_ORIGIN", ""))
+_extra_origins = [o.strip() for o in _extra.split(",") if o.strip()]
+
+_allowed_origins = list(dict.fromkeys(_BASE_ORIGINS + _extra_origins))
 
 app.add_middleware(
     CORSMiddleware,
