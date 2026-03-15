@@ -1,6 +1,18 @@
 """Happy-path tests for /api/mindmaps — map CRUD and map-scoped nodes/edges."""
 
+import os
+import uuid
+from datetime import datetime, timedelta, timezone
+
 from httpx import AsyncClient
+from jose import jwt
+
+_SECRET = os.environ.get("SECRET_KEY", "supersecretkey123")
+
+
+def _make_token(user_id: uuid.UUID) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=60)
+    return jwt.encode({"sub": str(user_id), "exp": expire}, _SECRET, algorithm="HS256")
 
 
 class TestMindmapsRouter:
@@ -9,7 +21,8 @@ class TestMindmapsRouter:
         user = await make_user()
         resp = await async_client.post(
             "/api/mindmaps/",
-            json={"owner_id": str(user.id), "title": "My Map", "is_public": False},
+            json={"title": "My Map", "is_public": False},
+            headers={"Authorization": f"Bearer {_make_token(user.id)}"},
         )
         assert resp.status_code == 201
         data = resp.json()

@@ -20,10 +20,10 @@ def _make_token(user_id: uuid.UUID) -> str:
 class TestAuthRouter:
     async def test_login_returns_token(self, async_client: AsyncClient, make_user) -> None:
         """POST /login with valid credentials returns a signed JWT."""
-        await make_user(email="login@example.com", hashed_password=_pwd.hash("password123"))
+        await make_user(email="login@example.com", hashed_password=_pwd.hash("testpass123"))
         resp = await async_client.post(
             "/api/auth/login",
-            json={"email": "login@example.com", "password": "password123"},
+            json={"email": "login@example.com", "password": "testpass123"},
         )
         assert resp.status_code == 200
         data = resp.json()

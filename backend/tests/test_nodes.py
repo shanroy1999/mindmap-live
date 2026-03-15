@@ -1,44 +1,55 @@
-"""Tests for the /api/nodes endpoints."""
+"""Basic smoke tests for node and health endpoints using the async test client."""
 
-import pytest
-from fastapi.testclient import TestClient
+import uuid
 
-from main import app
-
-client = TestClient(app)
+from httpx import AsyncClient
 
 
-def test_health_check() -> None:
+async def test_health_check(async_client: AsyncClient) -> None:
     """GET /health should return HTTP 200 with status ok."""
-    response = client.get("/health")
+    response = await async_client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json()["status"] == "ok"
 
 
-def test_list_nodes_returns_200() -> None:
-    """GET /api/nodes/ should return HTTP 200 with a list."""
-    response = client.get("/api/nodes/")
-    assert response.status_code == 200
-    assert isinstance(response.json(), list)
-
-
-def test_create_node_returns_201() -> None:
-    """POST /api/nodes/ should return HTTP 201 with the created node."""
-    payload = {"label": "Test Node", "x": 100.0, "y": 200.0}
-    response = client.post("/api/nodes/", json=payload)
+async def test_create_node_returns_201(
+    async_client: AsyncClient, make_user, make_map
+) -> None:
+    """POST /api/mindmaps/{map_id}/nodes returns 201 with the created node."""
+    user = await make_user()
+    mindmap = await make_map(owner=user)
+    response = await async_client.post(
+        f"/api/mindmaps/{mindmap.id}/nodes",
+        json={"label": "Test Node", "x": 100.0, "y": 200.0},
+    )
     assert response.status_code == 201
     data = response.json()
     assert data["label"] == "Test Node"
     assert "id" in data
 
 
-def test_get_nonexistent_node_returns_404() -> None:
-    """GET /api/nodes/{id} for an unknown ID should return HTTP 404."""
-    response = client.get("/api/nodes/does-not-exist")
+async def test_list_nodes_returns_200(
+    async_client: AsyncClient, make_user, make_map, make_node
+) -> None:
+    """GET /api/mindmaps/{map_id}/nodes returns 200 with a list."""
+    user = await make_user()
+    mindmap = await make_map(owner=user)
+    await make_node(mindmap=mindmap, label="Test Node")
+    response = await async_client.get(f"/api/mindmaps/{mindmap.id}/nodes")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+async def test_patch_nonexistent_node_returns_404(async_client: AsyncClient) -> None:
+    """PATCH /api/nodes/{id} for an unknown UUID returns HTTP 404."""
+    response = await async_client.patch(
+        f"/api/nodes/{uuid.uuid4()}",
+        json={"label": "whatever"},
+    )
     assert response.status_code == 404
 
 
-def test_delete_nonexistent_node_returns_404() -> None:
-    """DELETE /api/nodes/{id} for an unknown ID should return HTTP 404."""
-    response = client.delete("/api/nodes/does-not-exist")
+async def test_delete_nonexistent_node_returns_404(async_client: AsyncClient) -> None:
+    """DELETE /api/nodes/{id} for an unknown UUID returns HTTP 404."""
+    response = await async_client.delete(f"/api/nodes/{uuid.uuid4()}")
     assert response.status_code == 404

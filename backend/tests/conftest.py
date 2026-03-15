@@ -241,7 +241,7 @@ async def failing_client() -> AsyncGenerator[AsyncClient, None]:
     _main.AsyncSessionLocal = _FailingSessionLocal()
 
     async with AsyncClient(
-        transport=ASGITransport(app=app, raise_server_exceptions=False),
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
         base_url="http://test",
     ) as client:
         yield client
