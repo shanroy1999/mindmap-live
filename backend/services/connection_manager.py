@@ -29,6 +29,22 @@ from typing import Optional
 import redis.asyncio as aioredis
 from fastapi import WebSocket
 
+# ── Presence colour palette ───────────────────────────────────────────────────
+# Six visually distinct colours used to identify collaborators.
+_PRESENCE_COLORS: list[str] = [
+    '#f472b6',  # pink
+    '#34d399',  # emerald
+    '#60a5fa',  # sky-blue
+    '#fb923c',  # orange
+    '#a78bfa',  # violet
+    '#facc15',  # yellow
+]
+
+
+def user_presence_color(user_id: uuid.UUID) -> str:
+    """Return a deterministic colour from the presence palette for *user_id*."""
+    return _PRESENCE_COLORS[user_id.int % len(_PRESENCE_COLORS)]
+
 
 def _redis_url() -> str:
     return os.environ.get("REDIS_URL", "redis://localhost:6379")
@@ -38,6 +54,8 @@ def _redis_url() -> str:
 class _Connection:
     websocket: WebSocket
     user_id: uuid.UUID
+    display_name: str
+    color: str
     # Unique ID for this connection — used to exclude the sender in the
     # subscribe loop without exposing WebSocket object identity across the
     # Redis boundary.
@@ -96,27 +114,57 @@ class ConnectionManager:
         websocket: WebSocket,
         mindmap_id: uuid.UUID,
         user_id: uuid.UUID,
-    ) -> None:
-        """Accept *websocket* and register it in the room.
+        display_name: str,
+    ) -> str:
+        """Accept *websocket*, register it in the room, and announce the arrival.
 
-        Task lifecycle (starting / stopping the Redis subscriber) is the
+        Broadcasts a ``user_joined`` event to every peer already in the room
+        (excluding the new connection itself).  Task lifecycle is the
         responsibility of the caller (the WebSocket route handler).
 
         Args:
-            websocket:  The incoming WebSocket connection to accept and track.
-            mindmap_id: The map room this client is joining.
-            user_id:    The authenticated user (stored for presence features).
+            websocket:    The incoming WebSocket connection to accept and track.
+            mindmap_id:   The map room this client is joining.
+            user_id:      The authenticated user.
+            display_name: Human-readable name shown to other collaborators.
+
+        Returns:
+            The new connection's ``cid`` (used by the caller to build the
+            initial ``room_state`` snapshot without including the joiner).
         """
         await websocket.accept()
         key = str(mindmap_id)
-        self._rooms[key].append(_Connection(websocket=websocket, user_id=user_id))
+        color = user_presence_color(user_id)
+        conn = _Connection(
+            websocket=websocket,
+            user_id=user_id,
+            display_name=display_name,
+            color=color,
+        )
+        self._rooms[key].append(conn)
+
+        try:
+            await self.broadcast(
+                {
+                    "type": "user_joined",
+                    "userId": str(user_id),
+                    "displayName": display_name,
+                    "color": color,
+                },
+                mindmap_id,
+                exclude_websocket=websocket,
+            )
+        except Exception:
+            pass  # Don't fail the connection if Redis is unreachable.
+
+        return conn.cid
 
     async def disconnect(
         self,
         websocket: WebSocket,
         mindmap_id: uuid.UUID,
     ) -> None:
-        """Remove *websocket* from the room.
+        """Remove *websocket* from the room and broadcast a ``user_left`` event.
 
         Cleans up the room dict when the last client leaves.  Task cancellation
         is the responsibility of the caller (the WebSocket route handler).
@@ -126,9 +174,29 @@ class ConnectionManager:
             mindmap_id: The map room the client was connected to.
         """
         key = str(mindmap_id)
+
+        # Capture user info before removing so we can broadcast the departure.
+        leaving: Optional[_Connection] = next(
+            (c for c in self._rooms.get(key, []) if c.websocket is websocket),
+            None,
+        )
+
         self._rooms[key] = [c for c in self._rooms[key] if c.websocket is not websocket]
         if not self._rooms[key]:
             del self._rooms[key]
+
+        if leaving is not None:
+            try:
+                await self.broadcast(
+                    {
+                        "type": "user_left",
+                        "userId": str(leaving.user_id),
+                        "displayName": leaving.display_name,
+                    },
+                    mindmap_id,
+                )
+            except Exception:
+                pass  # Best-effort; room may be empty or Redis may be unreachable.
 
     # ── Subscriber-task accessors (used by the route handler) ─────────────────
 
@@ -154,6 +222,33 @@ class ConnectionManager:
     def room_is_empty(self, mindmap_id: uuid.UUID) -> bool:
         """Return True if no connections remain in *mindmap_id*'s room."""
         return str(mindmap_id) not in self._rooms
+
+    def get_room_users(
+        self,
+        mindmap_id: uuid.UUID,
+        exclude_cid: Optional[str] = None,
+    ) -> list[dict]:
+        """Return user-info dicts for all connections in *mindmap_id*'s room.
+
+        Args:
+            mindmap_id:  The target map room.
+            exclude_cid: Skip the connection with this cid — used to exclude
+                         the newly joined user from the ``room_state`` snapshot
+                         sent back to them on connect.
+
+        Returns:
+            A list of ``{"userId", "displayName", "color"}`` dicts.
+        """
+        key = str(mindmap_id)
+        return [
+            {
+                "userId": str(conn.user_id),
+                "displayName": conn.display_name,
+                "color": conn.color,
+            }
+            for conn in self._rooms.get(key, [])
+            if conn.cid != exclude_cid
+        ]
 
     async def broadcast(
         self,

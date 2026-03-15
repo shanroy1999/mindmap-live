@@ -28,7 +28,7 @@ from sqlalchemy import select
 from db.database import AsyncSessionLocal
 from models.graph import User
 from routers.auth import _ALGORITHM, _SECRET_KEY
-from services.connection_manager import manager
+from services.connection_manager import manager, user_presence_color
 
 router = APIRouter()
 
@@ -69,7 +69,7 @@ async def ws_mindmap(
         await websocket.close(code=_WS_POLICY_VIOLATION)
         return
 
-    await manager.connect(websocket, mindmap_id, user.id)
+    cid = await manager.connect(websocket, mindmap_id, user.id, user.display_name)
 
     # Start the Redis subscriber task for this room if one isn't already running.
     sub_task = manager.get_subscriber_task(mindmap_id)
@@ -80,9 +80,26 @@ async def ws_mindmap(
         )
         manager.set_subscriber_task(mindmap_id, sub_task)
 
+    # Send the current room occupants to the newly connected user so their
+    # presence indicator is populated immediately without waiting for moves.
+    existing_users = manager.get_room_users(mindmap_id, exclude_cid=cid)
+    if existing_users:
+        await websocket.send_json({"type": "room_state", "users": existing_users})
+
     try:
         while True:
             message = await websocket.receive_json()
+            # Enrich cursor_move events with server-authoritative user metadata
+            # so clients never need to trust client-supplied identity fields.
+            if message.get("type") == "cursor_move":
+                message = {
+                    "type": "cursor_move",
+                    "userId": str(user.id),
+                    "displayName": user.display_name,
+                    "color": user_presence_color(user.id),
+                    "x": float(message.get("x", 0)),
+                    "y": float(message.get("y", 0)),
+                }
             await manager.broadcast(message, mindmap_id, exclude_websocket=websocket)
     except WebSocketDisconnect:
         pass
