@@ -29,6 +29,7 @@ from schemas.graph import (
     EdgeRead,
     MindMapCreate,
     MindMapRead,
+    MindMapUpdate,
     NodeCreate,
     NodeRead,
 )
@@ -105,6 +106,29 @@ async def get_mindmap(
 ) -> MindMap:
     """Return a single mind map by ID."""
     return await _get_map_or_404(map_id, db)
+
+
+@router.patch(
+    "/{map_id}",
+    response_model=MindMapRead,
+    summary="Update a mind map",
+    responses={
+        404: {"description": "MindMap not found"},
+        422: {"description": "Validation error — invalid body or map_id"},
+    },
+)
+async def update_mindmap(
+    map_id: uuid.UUID,
+    payload: MindMapUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> MindMap:
+    """Apply a partial update (title, description, is_public) to a mind map."""
+    mindmap = await _get_map_or_404(map_id, db)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(mindmap, field, value)
+    await db.commit()
+    await db.refresh(mindmap)
+    return mindmap
 
 
 @router.delete(
