@@ -42,6 +42,7 @@ interface Props {
   mapId: string
   title: string
   onLogout: () => void
+  onBackToDashboard: () => void
 }
 
 // ── Editable custom node ──────────────────────────────────────────────────────
@@ -112,7 +113,7 @@ function toRFEdge(e: ApiEdge): RFEdge {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
+export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboard }: Props) {
   const token = localStorage.getItem('token') ?? ''
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
@@ -371,6 +372,13 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
     >
       {/* Toolbar */}
       <div className="flex items-center gap-3 px-4 py-2.5 bg-zinc-900 border-b border-white/10 z-10 shrink-0">
+        <button
+          onClick={onBackToDashboard}
+          className="px-3 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-white/60 hover:text-white border border-white/10 rounded-md transition-colors cursor-pointer"
+        >
+          ← My Maps
+        </button>
+        <div className="h-4 w-px bg-white/10" />
         {editingTitle ? (
           <input
             autoFocus
@@ -420,8 +428,8 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
 
       {/* Canvas + Sidebar row */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Canvas */}
-        <div className="flex-1" style={{ background: '#09090b' }}>
+        {/* Canvas — bg-color set on the wrapper; Background component colours the dot pattern */}
+        <div className="flex-1 bg-[#09090b]">
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -461,7 +469,7 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
               )}
               <div className="flex flex-col gap-2">
                 {suggestions.map((s, i) => (
-                  <div key={i} className="bg-zinc-800 border border-white/8 rounded-lg p-3 flex flex-col gap-2">
+                  <div key={i} className="bg-zinc-800 border border-white/10 rounded-lg p-3 flex flex-col gap-2">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="bg-indigo-950 text-indigo-300 border border-indigo-800/50 rounded px-1.5 py-0.5 text-[11px] font-medium max-w-[90px] truncate">
                         {nodeById.get(s.source_id) ?? s.source_id}
@@ -512,7 +520,7 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
                 {clusters.map((c, ci) => (
                   <div
                     key={ci}
-                    className="bg-zinc-800 border border-white/8 rounded-lg p-3"
+                    className="bg-zinc-800 border border-white/10 rounded-lg p-3"
                     style={{ borderLeftColor: CLUSTER_DOT_COLORS[ci % CLUSTER_DOT_COLORS.length], borderLeftWidth: 3 }}
                   >
                     <p className="text-xs font-semibold text-white mb-2">{c.cluster_name}</p>

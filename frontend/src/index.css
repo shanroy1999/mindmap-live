@@ -1,3 +1,10 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #09090b; /* zinc-950 — prevents white flash before React mounts */
+    color: #ffffff;
+  }
+}
