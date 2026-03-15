@@ -190,15 +190,20 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
 
   // Load initial node and edge data.
   useEffect(() => {
+    console.log('[loadMap] fetching mapId:', mapId)
     Promise.all([
       apiClient.get<ApiNode[]>(`/api/mindmaps/${mapId}/nodes`),
       apiClient.get<ApiEdge[]>(`/api/mindmaps/${mapId}/edges`),
     ])
       .then(([nodesRes, edgesRes]) => {
+        console.log('[loadMap] nodes response:', nodesRes.data)
+        console.log('[loadMap] edges response:', edgesRes.data)
         setNodes(nodesRes.data.map((n) => toRFNode(n, stableCommit)))
         setEdges(edgesRes.data.map(toRFEdge))
       })
-      .catch(console.error)
+      .catch((err) => {
+        console.error('[loadMap] error:', err)
+      })
   }, [mapId, setNodes, setEdges, stableCommit])
 
   // Close type picker when clicking outside.
@@ -320,17 +325,26 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
   const createNode = useCallback(
     async (nodeType: NodeType) => {
       setTypePickerOpen(false)
+      const body = {
+        label: 'New Node',
+        node_type: nodeType,
+        x: 100 + Math.random() * 400,
+        y: 100 + Math.random() * 300,
+      }
+      console.log('[createNode] selected type:', nodeType)
+      console.log('[createNode] POST body:', body)
       try {
-        const res = await apiClient.post<ApiNode>(`/api/mindmaps/${mapId}/nodes`, {
-          label: 'New Node',
-          node_type: nodeType,
-          x: 100 + Math.random() * 400,
-          y: 100 + Math.random() * 300,
-        })
+        const res = await apiClient.post<ApiNode>(`/api/mindmaps/${mapId}/nodes`, body)
+        console.log('[createNode] response:', res.data)
         const node = toRFNode(res.data, stableCommit)
-        setNodes((prev) => [...prev, { ...node, data: { ...node.data, editing: true } }])
+        console.log('[createNode] RFNode to add:', node)
+        setNodes((prev) => {
+          const next = [...prev, { ...node, data: { ...node.data, editing: true } }]
+          console.log('[createNode] setNodes — total nodes now:', next.length)
+          return next
+        })
       } catch (err) {
-        console.error('Failed to create node', err)
+        console.error('[createNode] error:', err)
       }
     },
     [mapId, stableCommit, setNodes],
