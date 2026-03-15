@@ -1,14 +1,15 @@
 import { useState, FormEvent } from 'react'
 import apiClient from '../api/client'
-import type { TokenResponse } from '../types/api'
+import type { User } from '../types/api'
 
 interface Props {
-  onSuccess: (token: string) => void
-  onNavigateToRegister: () => void
+  onSuccess: () => void
+  onNavigateToLogin: () => void
 }
 
-export default function Login({ onSuccess, onNavigateToRegister }: Props) {
+export default function Register({ onSuccess, onNavigateToLogin }: Props) {
   const [email, setEmail] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -18,10 +19,16 @@ export default function Login({ onSuccess, onNavigateToRegister }: Props) {
     setError(null)
     setLoading(true)
     try {
-      const res = await apiClient.post<TokenResponse>('/api/auth/login', { email, password })
-      onSuccess(res.data.access_token)
-    } catch {
-      setError('Invalid email or password')
+      await apiClient.post<User>('/api/users/', {
+        email,
+        display_name: displayName,
+        password,
+      })
+      onSuccess()
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(typeof msg === 'string' ? msg : 'Registration failed. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -30,8 +37,19 @@ export default function Login({ onSuccess, onNavigateToRegister }: Props) {
   return (
     <div style={styles.wrapper}>
       <form onSubmit={handleSubmit} style={styles.card}>
-        <h1 style={styles.title}>MindMap Live</h1>
+        <h1 style={styles.title}>Create account</h1>
         {error && <p style={styles.error}>{error}</p>}
+        <label style={styles.label}>
+          Display name
+          <input
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            required
+            autoFocus
+            style={styles.input}
+          />
+        </label>
         <label style={styles.label}>
           Email
           <input
@@ -39,7 +57,6 @@ export default function Login({ onSuccess, onNavigateToRegister }: Props) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            autoFocus
             style={styles.input}
           />
         </label>
@@ -50,16 +67,17 @@ export default function Login({ onSuccess, onNavigateToRegister }: Props) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            minLength={8}
             style={styles.input}
           />
         </label>
         <button type="submit" disabled={loading} style={styles.button}>
-          {loading ? 'Signing in…' : 'Sign in'}
+          {loading ? 'Creating account…' : 'Create account'}
         </button>
         <p style={styles.footer}>
-          Don't have an account?{' '}
-          <button type="button" onClick={onNavigateToRegister} style={styles.link}>
-            Register
+          Already have an account?{' '}
+          <button type="button" onClick={onNavigateToLogin} style={styles.link}>
+            Sign in
           </button>
         </p>
       </form>

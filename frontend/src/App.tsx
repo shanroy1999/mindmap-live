@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import Login from './pages/Login'
+import Register from './pages/Register'
 import MindMapCanvas from './components/MindMapCanvas'
 import apiClient from './api/client'
 import type { MindMap } from './types/api'
@@ -13,11 +14,25 @@ function getUserId(token: string): string {
   }
 }
 
+type View = 'login' | 'register'
+
+function navigate(to: View) {
+  window.history.pushState({}, '', to === 'register' ? '/register' : '/login')
+}
+
 export default function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
+  const [view, setView] = useState<View>(() =>
+    window.location.pathname === '/register' ? 'register' : 'login',
+  )
   const [mapId, setMapId] = useState<string | null>(null)
   const [mapTitle, setMapTitle] = useState('')
   const [loading, setLoading] = useState(false)
+
+  function goTo(to: View) {
+    navigate(to)
+    setView(to)
+  }
 
   useEffect(() => {
     if (!token) return
@@ -66,7 +81,17 @@ export default function App() {
     }
   }
 
-  if (!token) return <Login onSuccess={handleLogin} />
+  if (!token) {
+    if (view === 'register') {
+      return (
+        <Register
+          onSuccess={() => goTo('login')}
+          onNavigateToLogin={() => goTo('login')}
+        />
+      )
+    }
+    return <Login onSuccess={handleLogin} onNavigateToRegister={() => goTo('register')} />
+  }
 
   if (loading) {
     return (
