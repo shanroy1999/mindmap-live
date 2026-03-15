@@ -48,26 +48,32 @@ interface Props {
 // Defined at module level so the nodeTypes object is a stable reference and
 // React Flow never needlessly remounts nodes between renders.
 
-function EditableNode({ id, data }: NodeProps) {
+function EditableNode({ id, data, selected }: NodeProps) {
   const label = data.label as string
   const editing = data.editing as boolean
   const onCommit = data.onCommit as (id: string, label: string) => void
-  const bgColor = (data.bgColor as string | undefined) ?? '#fff'
+  const bgColor = (data.bgColor as string | undefined) ?? '#27272a'
 
   return (
-    <div style={{ ...rfNodeStyle, background: bgColor }}>
+    <div
+      className={`rounded text-xs text-center min-w-[60px] px-2.5 py-2 border transition-colors ${
+        selected
+          ? 'border-indigo-400 shadow-lg shadow-indigo-900/40'
+          : 'border-white/15'
+      }`}
+      style={{ background: bgColor, color: '#fff' }}
+    >
       <Handle type="target" position={Position.Top} style={handleStyle} />
       {editing ? (
         <input
           autoFocus
           defaultValue={label}
-          style={rfNodeInputStyle}
+          className="w-28 text-xs px-1 py-0.5 bg-zinc-700 border border-indigo-500 rounded outline-none text-white"
           onBlur={(e) => onCommit(id, e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') onCommit(id, e.currentTarget.value)
-            if (e.key === 'Escape') onCommit(id, label) // cancel → restore original
+            if (e.key === 'Escape') onCommit(id, label)
           }}
-          // Prevent ReactFlow from treating clicks inside the input as canvas clicks.
           onClick={(e) => e.stopPropagation()}
         />
       ) : (
@@ -364,7 +370,7 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
       tabIndex={-1}
     >
       {/* Toolbar */}
-      <div style={toolbarStyle}>
+      <div className="flex items-center gap-3 px-4 py-2.5 bg-zinc-900 border-b border-white/10 z-10 shrink-0">
         {editingTitle ? (
           <input
             autoFocus
@@ -375,27 +381,38 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
               if (e.key === 'Enter') commitTitleEdit()
               if (e.key === 'Escape') { setLocalTitle(title); setEditingTitle(false) }
             }}
-            style={titleInputStyle}
+            className="text-sm font-bold text-indigo-400 bg-zinc-800 border border-indigo-500 rounded px-2 py-0.5 outline-none w-48"
           />
         ) : (
           <span
             title="Click to rename"
             onClick={() => setEditingTitle(true)}
-            style={titleStyle}
+            className="text-sm font-bold text-indigo-400 cursor-pointer px-2 py-0.5 rounded hover:bg-white/5 transition-colors select-none"
           >
-            {localTitle}
+            <span className="mr-1 opacity-70">✦</span>{localTitle}
           </span>
         )}
-        <button onClick={handleAddNode} style={btnStyle}>+ New Node</button>
+        <div className="h-4 w-px bg-white/10" />
+        <button
+          onClick={handleAddNode}
+          className="px-3 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-white border border-white/10 rounded-md transition-colors cursor-pointer"
+        >
+          + New Node
+        </button>
         <button
           onClick={() => setSidebarOpen((o) => !o)}
-          style={{ ...btnStyle, background: sidebarOpen ? '#4f46e5' : '#6366f1' }}
+          className={`px-3 py-1.5 text-xs font-semibold border rounded-md transition-colors cursor-pointer ${
+            sidebarOpen
+              ? 'bg-indigo-500 hover:bg-indigo-400 border-indigo-400 text-white'
+              : 'bg-zinc-800 hover:bg-zinc-700 border-white/10 text-white'
+          }`}
         >
           ✨ AI Suggest
         </button>
+        <div className="flex-1" />
         <button
           onClick={onLogout}
-          style={{ ...btnStyle, background: '#e5e7eb', color: '#374151' }}
+          className="px-3 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-white/60 hover:text-white border border-white/10 rounded-md transition-colors cursor-pointer"
         >
           Logout
         </button>
@@ -404,7 +421,7 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
       {/* Canvas + Sidebar row */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Canvas */}
-        <div style={{ flex: 1 }}>
+        <div className="flex-1" style={{ background: '#09090b' }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -417,89 +434,104 @@ export default function MindMapCanvas({ mapId, title, onLogout }: Props) {
             deleteKeyCode={null}
             fitView
           >
-            <Background />
+            <Background color="#27272a" />
             <Controls />
           </ReactFlow>
         </div>
 
         {/* AI Sidebar */}
         {sidebarOpen && (
-          <div style={sidebarStyle}>
+          <div className="w-72 shrink-0 bg-zinc-900 border-l border-white/10 flex flex-col overflow-y-auto">
             {/* ── Relationship Suggestions ── */}
-            <div style={sidebarSectionStyle}>
-              <h3 style={sidebarHeadingStyle}>Relationship Suggestions</h3>
+            <div className="p-4 border-b border-white/10">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-3">
+                Relationship Suggestions
+              </h3>
               <button
                 onClick={handleSuggest}
                 disabled={loadingSuggestions}
-                style={{ ...btnStyle, width: '100%', marginBottom: 10 }}
+                className="w-full px-3 py-2 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white border border-white/10 rounded-md transition-colors cursor-pointer mb-3"
               >
                 {loadingSuggestions ? <Spinner /> : 'Find Connections'}
               </button>
               {suggestions.length === 0 && !loadingSuggestions && (
-                <p style={emptyTextStyle}>Click "Find Connections" to get AI suggestions.</p>
+                <p className="text-xs text-white/25 text-center py-2">
+                  Click &quot;Find Connections&quot; to get AI suggestions.
+                </p>
               )}
-              {suggestions.map((s, i) => (
-                <div key={i} style={cardStyle}>
-                  <div style={cardRowStyle}>
-                    <span style={nodePillStyle}>{nodeById.get(s.source_id) ?? s.source_id}</span>
-                    <span style={{ color: '#9ca3af', fontSize: 12 }}>→</span>
-                    <span style={nodePillStyle}>{nodeById.get(s.target_id) ?? s.target_id}</span>
+              <div className="flex flex-col gap-2">
+                {suggestions.map((s, i) => (
+                  <div key={i} className="bg-zinc-800 border border-white/8 rounded-lg p-3 flex flex-col gap-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="bg-indigo-950 text-indigo-300 border border-indigo-800/50 rounded px-1.5 py-0.5 text-[11px] font-medium max-w-[90px] truncate">
+                        {nodeById.get(s.source_id) ?? s.source_id}
+                      </span>
+                      <span className="text-white/30 text-xs">→</span>
+                      <span className="bg-indigo-950 text-indigo-300 border border-indigo-800/50 rounded px-1.5 py-0.5 text-[11px] font-medium max-w-[90px] truncate">
+                        {nodeById.get(s.target_id) ?? s.target_id}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-white/40 leading-relaxed">{s.reason}</p>
+                    <button
+                      onClick={() => handleAddSuggestionEdge(s)}
+                      className="self-start px-2.5 py-1 text-[11px] font-semibold bg-indigo-500 hover:bg-indigo-400 text-white rounded transition-colors cursor-pointer"
+                    >
+                      Add Edge
+                    </button>
                   </div>
-                  <p style={cardReasonStyle}>{s.reason}</p>
-                  <button
-                    onClick={() => handleAddSuggestionEdge(s)}
-                    style={{ ...btnStyle, fontSize: 12, padding: '4px 10px' }}
-                  >
-                    Add Edge
-                  </button>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
 
             {/* ── Semantic Clusters ── */}
-            <div style={sidebarSectionStyle}>
-              <h3 style={sidebarHeadingStyle}>Semantic Clusters</h3>
+            <div className="p-4">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-3">
+                Semantic Clusters
+              </h3>
               <button
                 onClick={handleCluster}
                 disabled={loadingClusters}
-                style={{ ...btnStyle, width: '100%', marginBottom: 10 }}
+                className="w-full px-3 py-2 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white border border-white/10 rounded-md transition-colors cursor-pointer mb-2"
               >
                 {loadingClusters ? <Spinner /> : 'Cluster Nodes'}
               </button>
-              {clusters.length === 0 && !loadingClusters && (
-                <p style={emptyTextStyle}>Click "Cluster Nodes" to group by topic.</p>
-              )}
               {clusters.length > 0 && (
                 <button
                   onClick={handleClearClusters}
-                  style={{ ...btnStyle, background: '#e5e7eb', color: '#374151', width: '100%', marginBottom: 10 }}
+                  className="w-full px-3 py-2 text-xs font-semibold bg-transparent hover:bg-white/5 text-white/40 hover:text-white/70 border border-white/10 rounded-md transition-colors cursor-pointer mb-3"
                 >
                   Clear Clusters
                 </button>
               )}
-              {clusters.map((c, ci) => (
-                <div
-                  key={ci}
-                  style={{ ...cardStyle, borderLeft: `3px solid ${CLUSTER_DOT_COLORS[ci % CLUSTER_DOT_COLORS.length]}` }}
-                >
-                  <p style={{ margin: '0 0 6px', fontWeight: 600, fontSize: 13, color: '#111827' }}>
-                    {c.cluster_name}
-                  </p>
-                  {c.node_ids.map((id) => (
-                    <div key={id} style={clusterNodeRowStyle}>
-                      <span
-                        style={{
-                          ...clusterDotStyle,
-                          background: CLUSTER_DOT_COLORS[ci % CLUSTER_DOT_COLORS.length],
-                        }}
-                      />
-                      <span style={{ fontSize: 12, color: '#374151' }}>
-                        {nodeById.get(id) ?? id}
-                      </span>
+              {clusters.length === 0 && !loadingClusters && (
+                <p className="text-xs text-white/25 text-center py-2">
+                  Click &quot;Cluster Nodes&quot; to group by topic.
+                </p>
+              )}
+              <div className="flex flex-col gap-2">
+                {clusters.map((c, ci) => (
+                  <div
+                    key={ci}
+                    className="bg-zinc-800 border border-white/8 rounded-lg p-3"
+                    style={{ borderLeftColor: CLUSTER_DOT_COLORS[ci % CLUSTER_DOT_COLORS.length], borderLeftWidth: 3 }}
+                  >
+                    <p className="text-xs font-semibold text-white mb-2">{c.cluster_name}</p>
+                    <div className="flex flex-col gap-1">
+                      {c.node_ids.map((id) => (
+                        <div key={id} className="flex items-center gap-2">
+                          <span
+                            className="w-1.5 h-1.5 rounded-full shrink-0"
+                            style={{ background: CLUSTER_DOT_COLORS[ci % CLUSTER_DOT_COLORS.length] }}
+                          />
+                          <span className="text-[11px] text-white/60 truncate">
+                            {nodeById.get(id) ?? id}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              ))}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -528,162 +560,18 @@ function Spinner() {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 // 6-color palette: purple, teal, coral, amber, blue, green
-// BG: soft pastels applied to canvas nodes.
-// DOT: saturated versions used for sidebar legend dots.
-const CLUSTER_BG_COLORS = ['#ede9fe', '#ccfbf1', '#fee2e2', '#fef3c7', '#dbeafe', '#dcfce7']
-const CLUSTER_DOT_COLORS = ['#7c3aed', '#0d9488', '#dc2626', '#d97706', '#2563eb', '#16a34a']
+// BG: dark saturated versions for canvas nodes (white text remains readable).
+// DOT: brighter versions used for sidebar legend dots and card accents.
+const CLUSTER_BG_COLORS = ['#3730a3', '#134e4a', '#7f1d1d', '#78350f', '#1e3a8a', '#14532d']
+const CLUSTER_DOT_COLORS = ['#818cf8', '#2dd4bf', '#f87171', '#fbbf24', '#60a5fa', '#4ade80']
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const toolbarStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 12,
-  padding: '10px 16px',
-  background: '#fff',
-  borderBottom: '1px solid #e5e7eb',
-  zIndex: 10,
-}
-
-const titleStyle: React.CSSProperties = {
-  fontWeight: 700,
-  fontSize: 16,
-  color: '#6366f1',
-  cursor: 'pointer',
-  borderRadius: 4,
-  padding: '2px 4px',
-}
-
-const titleInputStyle: React.CSSProperties = {
-  fontWeight: 700,
-  fontSize: 16,
-  color: '#6366f1',
-  border: '1px solid #6366f1',
-  borderRadius: 4,
-  padding: '2px 4px',
-  outline: 'none',
-  width: 200,
-}
-
-const btnStyle: React.CSSProperties = {
-  padding: '6px 14px',
-  background: '#6366f1',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 6,
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: 'pointer',
-}
-
-// Matches the visual style of react-flow-renderer's default node.
-const rfNodeStyle: React.CSSProperties = {
-  background: '#fff',
-  border: '1px solid #1a192b',
-  borderRadius: 3,
-  padding: 10,
-  fontSize: 12,
-  textAlign: 'center',
-  minWidth: 60,
-}
-
-// Always-visible connection handles — larger dot with a border so they stand out.
+// Always-visible connection handles — indigo dot, dark border.
 const handleStyle: React.CSSProperties = {
   width: 10,
   height: 10,
   background: '#6366f1',
-  border: '2px solid #fff',
+  border: '2px solid #18181b',
   borderRadius: '50%',
-}
-
-const rfNodeInputStyle: React.CSSProperties = {
-  width: 120,
-  fontSize: 12,
-  padding: '2px 4px',
-  border: '1px solid #6366f1',
-  borderRadius: 3,
-  outline: 'none',
-}
-
-const sidebarStyle: React.CSSProperties = {
-  width: 300,
-  flexShrink: 0,
-  overflowY: 'auto',
-  background: '#f9fafb',
-  borderLeft: '1px solid #e5e7eb',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 0,
-}
-
-const sidebarSectionStyle: React.CSSProperties = {
-  padding: '14px 14px 10px',
-  borderBottom: '1px solid #e5e7eb',
-}
-
-const sidebarHeadingStyle: React.CSSProperties = {
-  margin: '0 0 10px',
-  fontSize: 13,
-  fontWeight: 700,
-  color: '#374151',
-  textTransform: 'uppercase',
-  letterSpacing: '0.04em',
-}
-
-const cardStyle: React.CSSProperties = {
-  background: '#fff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  padding: '10px 12px',
-  marginBottom: 8,
-}
-
-const cardRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  marginBottom: 6,
-  flexWrap: 'wrap',
-}
-
-const nodePillStyle: React.CSSProperties = {
-  background: '#ede9fe',
-  color: '#4f46e5',
-  borderRadius: 4,
-  padding: '2px 6px',
-  fontSize: 12,
-  fontWeight: 500,
-  maxWidth: 100,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
-
-const cardReasonStyle: React.CSSProperties = {
-  margin: '0 0 8px',
-  fontSize: 12,
-  color: '#6b7280',
-  lineHeight: 1.4,
-}
-
-const emptyTextStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 12,
-  color: '#9ca3af',
-  textAlign: 'center',
-  padding: '8px 0',
-}
-
-const clusterNodeRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  marginBottom: 4,
-}
-
-const clusterDotStyle: React.CSSProperties = {
-  width: 8,
-  height: 8,
-  borderRadius: '50%',
-  flexShrink: 0,
 }
