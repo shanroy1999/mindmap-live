@@ -28,6 +28,31 @@ interface NodeMovedEvent {
   y: number
 }
 
+interface LayoutNode {
+  id: string
+  x: number
+  y: number
+  level: number
+}
+
+interface LayoutEdge {
+  source_id: string
+  target_id: string
+  reason: string
+}
+
+interface LayoutCluster {
+  cluster_name: string
+  node_ids: string[]
+  color: string
+}
+
+interface AutoLayoutResponse {
+  nodes: LayoutNode[]
+  edges_to_add: LayoutEdge[]
+  clusters: LayoutCluster[]
+}
+
 interface RelationshipSuggestion {
   source_id: string
   target_id: string
@@ -269,6 +294,8 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
   const [typePickerOpen, setTypePickerOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
   const typePickerRef = useRef<HTMLDivElement>(null)
+  const [layoutLoading, setLayoutLoading] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
 
   // ── Presence state ─────────────────────────────────────────────────────────
   const [remoteCursors, setRemoteCursors] = useState<Map<string, RemoteCursor>>(new Map())
@@ -602,6 +629,106 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
     }
   }
 
+  // ── Feature: auto-layout ───────────────────────────────────────────────────
+
+  const handleAutoLayout = useCallback(async () => {
+    setLayoutLoading(true)
+    try {
+      const res = await apiClient.post<AutoLayoutResponse>(
+        `/api/mindmaps/${mapId}/auto-layout`,
+      )
+      const { nodes: layoutNodes, edges_to_add, clusters: layoutClusters } = res.data
+
+      // Map from Claude's bright accent colours to dark node backgrounds.
+      const LAYOUT_CLUSTER_BG: Record<string, string> = {
+        '#6366f1': '#1e1b4b',
+        '#f59e0b': '#451a03',
+        '#ef4444': '#450a0a',
+        '#10b981': '#022c22',
+      }
+      const colorMap = new Map<string, string>()
+      layoutClusters.forEach((c) => {
+        const bg = LAYOUT_CLUSTER_BG[c.color] ?? '#27272a'
+        c.node_ids.forEach((id) => colorMap.set(id, bg))
+      })
+
+      // Sort by level so root animates first, then children, then grandchildren.
+      const sortedByLevel = [...layoutNodes].sort((a, b) => a.level - b.level)
+      const animOrder = new Map(sortedByLevel.map((n, i) => [n.id, i]))
+
+      // Step 1: arm CSS transitions on all nodes (positions are still unchanged).
+      setNodes((prev) =>
+        prev.map((n) => ({
+          ...n,
+          style: {
+            ...n.style,
+            transition: `transform 600ms cubic-bezier(0.34,1.56,0.64,1) ${
+              (animOrder.get(n.id) ?? 0) * 50
+            }ms`,
+          },
+        })),
+      )
+
+      // Step 2: after two browser frames (guarantees transition is painted before
+      // positions update) move every node to its new position and apply cluster colours.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const posMap = new Map(layoutNodes.map((n) => [n.id, n]))
+          setNodes((prev) =>
+            prev.map((n) => {
+              const pos = posMap.get(n.id)
+              return {
+                ...n,
+                position: pos ? { x: pos.x, y: pos.y } : n.position,
+                data: { ...n.data, bgColor: colorMap.get(n.id) },
+              }
+            }),
+          )
+        })
+      })
+
+      // Persist every repositioned node to the backend (fire-and-forget).
+      layoutNodes.forEach((ln) =>
+        apiClient.patch(`/api/nodes/${ln.id}`, { x: ln.x, y: ln.y }).catch(console.error),
+      )
+
+      // Add suggested edges to canvas + backend.
+      await Promise.allSettled(
+        edges_to_add.map(async (e) => {
+          try {
+            const edgeRes = await apiClient.post<ApiEdge>(
+              `/api/mindmaps/${mapId}/edges`,
+              { source_id: e.source_id, target_id: e.target_id },
+            )
+            setEdges((prev) =>
+              addEdge(
+                { source: e.source_id, target: e.target_id, id: edgeRes.data.id },
+                prev,
+              ),
+            )
+          } catch {
+            // Silently skip edges that already exist or reference unknown nodes.
+          }
+        }),
+      )
+
+      // After the last node finishes animating, remove the transition style
+      // (so subsequent drags feel instant) and show the success toast.
+      const totalMs = layoutNodes.length * 50 + 600 + 150
+      setTimeout(() => {
+        setNodes((prev) =>
+          prev.map((n) => ({ ...n, style: { ...n.style, transition: undefined } })),
+        )
+        setToast('Map organized by AI ✨')
+        setTimeout(() => setToast(null), 2500)
+      }, totalMs)
+    } catch (err) {
+      console.error('Auto layout failed', err)
+    } finally {
+      setLayoutLoading(false)
+    }
+  }, [mapId, setNodes, setEdges])
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -679,6 +806,13 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
         </div>
 
         <button
+          onClick={handleAutoLayout}
+          disabled={layoutLoading}
+          className="px-3 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed text-white border border-white/10 rounded-md transition-colors cursor-pointer"
+        >
+          ✦ Auto Layout
+        </button>
+        <button
           onClick={() => setSidebarOpen((o) => !o)}
           className={`px-3 py-1.5 text-xs font-semibold border rounded-md transition-colors cursor-pointer ${
             sidebarOpen
@@ -729,7 +863,27 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
       {/* Canvas + Sidebar row */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Canvas — bg-color set on the wrapper; Background component colours the dot pattern */}
-        <div className="flex-1 bg-[#09090b]" ref={canvasContainerRef}>
+        <div className="flex-1 bg-[#09090b] relative" ref={canvasContainerRef}>
+
+          {/* Auto-layout loading overlay */}
+          {layoutLoading && (
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/55 backdrop-blur-[2px]">
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  border: '3px solid rgba(255,255,255,0.2)',
+                  borderTopColor: '#a5b4fc',
+                  borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite',
+                }}
+              />
+              <p className="text-sm font-medium text-white/80 select-none">
+                AI is organizing your map…
+              </p>
+            </div>
+          )}
+
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -851,6 +1005,16 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
           </div>
         )}
       </div>
+
+      {/* Toast notification */}
+      {toast && (
+        <div
+          className="fixed bottom-6 left-1/2 z-[200] px-4 py-2.5 bg-zinc-800 border border-white/10 rounded-lg text-sm text-white font-medium shadow-xl pointer-events-none"
+          style={{ animation: 'toastSlideUp 0.3s ease forwards' }}
+        >
+          {toast}
+        </div>
+      )}
 
       {/* Right-click context menu */}
       {contextMenu && (
