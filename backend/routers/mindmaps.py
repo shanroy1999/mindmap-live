@@ -22,7 +22,8 @@ from sqlalchemy import delete as sql_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
-from models.graph import Edge, MindMap, Node
+from models.graph import Edge, MindMap, Node, User
+from routers.auth import get_current_user
 from schemas.graph import (
     EdgeCreate,
     EdgeRead,
@@ -63,10 +64,11 @@ async def _get_map_or_404(map_id: uuid.UUID, db: AsyncSession) -> MindMap:
 async def create_mindmap(
     payload: MindMapCreate,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> MindMap:
-    """Create a mind map owned by the given ``owner_id``."""
+    """Create a mind map owned by the authenticated user."""
     mindmap = MindMap(
-        owner_id=payload.owner_id,
+        owner_id=current_user.id,
         title=payload.title,
         description=payload.description,
         is_public=payload.is_public,

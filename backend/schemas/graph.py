@@ -71,7 +71,6 @@ class UserUpdate(BaseModel):
 class MindMapCreate(BaseModel):
     """Fields required to create a new map workspace."""
 
-    owner_id: uuid.UUID
     title: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     is_public: bool = False

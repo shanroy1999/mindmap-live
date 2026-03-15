@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from db.database import engine, AsyncSessionLocal
-from routers import auth, edges, mindmaps, nodes, users, websocket
+from routers import ai, auth, edges, mindmaps, nodes, users, websocket
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -73,6 +73,7 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
 
 app.include_router(auth.router,     prefix="/api/auth",     tags=["auth"])
 app.include_router(mindmaps.router, prefix="/api/mindmaps", tags=["mindmaps"])
+app.include_router(ai.router,       prefix="/api/mindmaps", tags=["ai"])
 app.include_router(nodes.router,    prefix="/api/nodes",    tags=["nodes"])
 app.include_router(edges.router,    prefix="/api/edges",    tags=["edges"])
 app.include_router(users.router,    prefix="/api/users",    tags=["users"])
