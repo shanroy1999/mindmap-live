@@ -175,6 +175,7 @@ async def create_node(
         label=payload.label,
         description=payload.description,
         color=payload.color,
+        node_type=payload.node_type,
         x=payload.x,
         y=payload.y,
     )

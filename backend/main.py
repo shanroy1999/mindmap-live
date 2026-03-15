@@ -23,7 +23,13 @@ from routers import ai, auth, edges, mindmaps, nodes, users, websocket
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Verify database connectivity on startup; dispose the engine on shutdown."""
+    """Verify database connectivity on startup; dispose the engine on shutdown.
+
+    Redis is intentionally NOT checked here.  The ConnectionManager connects
+    to Redis lazily — only when the first WebSocket client broadcasts a message
+    or subscribes to a room.  This keeps AI and REST endpoints unaffected by
+    Redis availability.
+    """
     async with AsyncSessionLocal() as session:
         await session.execute(text("SELECT 1"))
     yield

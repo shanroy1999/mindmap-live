@@ -74,9 +74,19 @@ class ConnectionManager:
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     async def _publisher(self) -> aioredis.Redis:  # type: ignore[type-arg]
-        """Return (and lazily create) the shared publish-only Redis client."""
+        """Return (and lazily create) the shared publish-only Redis client.
+
+        The client is created on the first ``broadcast`` call — never at import
+        time or during startup — so that routes which don't use WebSockets are
+        completely unaffected by Redis availability.
+        """
         if self._pub is None:
-            self._pub = aioredis.from_url(_redis_url(), decode_responses=True)
+            self._pub = aioredis.from_url(
+                _redis_url(),
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+            )
         return self._pub
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -190,7 +200,12 @@ class ConnectionManager:
         key = str(mindmap_id)
         channel = f"mindmap:{key}"
 
-        redis_sub = aioredis.from_url(_redis_url(), decode_responses=True)
+        redis_sub = aioredis.from_url(
+            _redis_url(),
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+        )
         pubsub = redis_sub.pubsub()
         await pubsub.subscribe(channel)
 
@@ -227,4 +242,7 @@ class ConnectionManager:
 
 
 # Singleton shared by all WebSocket route handlers.
+# Instantiated here (not at import time inside lifespan) but the constructor
+# does NOT connect to Redis — all Redis I/O is deferred until the first
+# WebSocket broadcast or subscribe call.
 manager = ConnectionManager()
