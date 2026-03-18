@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 // Derive the WebSocket base URL from VITE_API_URL by replacing http(s) with ws(s).
 // Falls back to a relative path so same-origin deployments work without any env var.
@@ -9,8 +9,19 @@ const WS_BASE = (_apiUrl
 
 type JsonObject = Record<string, unknown>
 
+/** Presence data for a single remote user. x/y are absent until their first cursor_move. */
+export interface PresenceUser {
+  displayName: string
+  color: string
+  x?: number
+  y?: number
+}
+
+/** userId → PresenceUser for every peer in the room (never includes the local user). */
+export type PresenceMap = Map<string, PresenceUser>
+
 interface UseMapSyncOptions {
-  /** Called with every JSON message received from the server. */
+  /** Called with every JSON message that is NOT handled internally (e.g. node_moved). */
   onEvent: (event: JsonObject) => void
   /** Called when the connection opens. */
   onOpen?: () => void
@@ -23,17 +34,29 @@ interface UseMapSyncResult {
   sendEvent: (event: JsonObject) => void
   /** Send a cursor_move event, throttled to once every 50 ms. */
   sendCursorMove: (x: number, y: number) => void
+  /** Live map of every connected peer keyed by userId. */
+  presenceMap: PresenceMap
+}
+
+/** Decode a JWT and return the `sub` claim (user id), or '' on failure. */
+function getTokenSub(token: string): string {
+  try {
+    return (JSON.parse(atob(token.split('.')[1])) as { sub?: string }).sub ?? ''
+  } catch {
+    return ''
+  }
 }
 
 /**
  * Opens a WebSocket to `/ws/mindmaps/{mindmapId}?token={jwt}` and keeps it
  * alive for the lifetime of the component.
  *
- * The socket is torn down and recreated whenever `mindmapId` or `token`
- * changes (e.g. after a token refresh or map switch).
+ * Presence events (`room_state`, `user_joined`, `user_left`, `cursor_move`)
+ * are handled internally — they update `presenceMap` and are NOT forwarded
+ * to `onEvent` (except `user_joined` and `user_left`, which are also forwarded
+ * so the component can show toast notifications).
  *
- * `sendEvent` is stable across renders and silently drops messages if the
- * socket is not yet open — callers do not need to guard against that case.
+ * All other events (e.g. `node_moved`) are forwarded to `onEvent` unchanged.
  */
 export function useMapSync(
   mindmapId: string,
@@ -41,6 +64,12 @@ export function useMapSync(
   { onEvent, onOpen, onClose }: UseMapSyncOptions,
 ): UseMapSyncResult {
   const wsRef = useRef<WebSocket | null>(null)
+  const [presenceMap, setPresenceMap] = useState<PresenceMap>(new Map())
+
+  // Keep the decoded user id in a ref so the message handler always reads the
+  // latest value without needing to be recreated on every token change.
+  const currentUserIdRef = useRef(getTokenSub(token))
+  useEffect(() => { currentUserIdRef.current = getTokenSub(token) }, [token])
 
   // Keep callbacks in refs so the effect closure never goes stale.
   const onEventRef = useRef(onEvent)
@@ -53,6 +82,9 @@ export function useMapSync(
   useEffect(() => {
     if (!mindmapId || !token) return
 
+    // Start each connection with a clean presence slate.
+    setPresenceMap(new Map())
+
     const url = `${WS_BASE}/mindmaps/${mindmapId}?token=${token}`
     const ws = new WebSocket(url)
     wsRef.current = ws
@@ -60,12 +92,74 @@ export function useMapSync(
     ws.onopen = () => onOpenRef.current?.()
 
     ws.onmessage = (ev: MessageEvent) => {
+      let data: JsonObject
       try {
-        const data = JSON.parse(ev.data as string) as JsonObject
-        onEventRef.current(data)
+        data = JSON.parse(ev.data as string) as JsonObject
       } catch {
-        // Non-JSON frames are ignored.
+        return // Ignore non-JSON frames.
       }
+
+      const type = data.type as string
+
+      // ── room_state: full snapshot sent to new joiners ─────────────────────
+      if (type === 'room_state') {
+        const users = (data.users as Array<{ userId: string; displayName: string; color: string }>) ?? []
+        setPresenceMap(
+          new Map(
+            users
+              .filter((u) => u.userId !== currentUserIdRef.current)
+              .map((u) => [u.userId, { displayName: u.displayName, color: u.color }]),
+          ),
+        )
+        return // Internal only — no toast needed.
+      }
+
+      // ── user_joined: peer entered the room ────────────────────────────────
+      if (type === 'user_joined') {
+        const { userId, displayName, color } = data as {
+          userId: string; displayName: string; color: string
+        }
+        if (userId !== currentUserIdRef.current) {
+          setPresenceMap((prev) => {
+            const next = new Map(prev)
+            next.set(userId, { displayName, color })
+            return next
+          })
+        }
+        onEventRef.current(data) // Forward for toast notification.
+        return
+      }
+
+      // ── user_left: peer left the room ──────────────────────────────────────
+      if (type === 'user_left') {
+        const { userId } = data as { userId: string }
+        setPresenceMap((prev) => {
+          const next = new Map(prev)
+          next.delete(userId)
+          return next
+        })
+        onEventRef.current(data) // Forward for toast notification.
+        return
+      }
+
+      // ── cursor_move: update peer's position ───────────────────────────────
+      if (type === 'cursor_move') {
+        const { userId, displayName, x, y, color } = data as {
+          userId: string; displayName: string; x: number; y: number; color: string
+        }
+        if (userId === currentUserIdRef.current) return // Never render own cursor.
+        setPresenceMap((prev) => {
+          const next = new Map(prev)
+          const existing = prev.get(userId)
+          // Merge with existing entry to preserve any fields not in this event.
+          next.set(userId, { ...existing, displayName, color, x, y })
+          return next
+        })
+        return // Internal only — canvas reads presenceMap directly.
+      }
+
+      // All other events (node_moved, etc.) are forwarded to the component.
+      onEventRef.current(data)
     }
 
     ws.onclose = () => {
@@ -104,5 +198,5 @@ export function useMapSync(
     }
   }, [])
 
-  return { sendEvent, sendCursorMove }
+  return { sendEvent, sendCursorMove, presenceMap }
 }

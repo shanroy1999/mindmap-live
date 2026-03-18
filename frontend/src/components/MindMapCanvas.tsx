@@ -16,7 +16,7 @@ import ReactFlow, {
 } from 'react-flow-renderer'
 import 'react-flow-renderer/dist/style.css'
 import apiClient from '../api/client'
-import { useMapSync } from '../hooks/useMapSync'
+import { useMapSync, type PresenceMap } from '../hooks/useMapSync'
 import type { ApiNode, ApiEdge } from '../types/api'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -70,19 +70,6 @@ interface ContextMenu {
   nodeId: string
 }
 
-interface RemoteCursor {
-  userId: string
-  displayName: string
-  x: number
-  y: number
-  color: string
-}
-
-interface OnlineUser {
-  userId: string
-  displayName: string
-  color: string
-}
 
 interface Props {
   mapId: string
@@ -166,12 +153,12 @@ const nodeTypes = { editable: EditableNode }
 // we manually compute screen coords from canvas coords + the stored transform.
 
 interface PresenceLayerProps {
-  cursors: RemoteCursor[]
+  presenceMap: PresenceMap
   containerRef: React.RefObject<HTMLDivElement>
   sendCursorMove: (x: number, y: number) => void
 }
 
-function PresenceLayer({ cursors, containerRef, sendCursorMove }: PresenceLayerProps) {
+function PresenceLayer({ presenceMap, containerRef, sendCursorMove }: PresenceLayerProps) {
   // transform = [panX, panY, zoom] — updates whenever the user pans or zooms.
   const transform = useStore(
     (s: { transform: [number, number, number] }) => s.transform,
@@ -200,57 +187,59 @@ function PresenceLayer({ cursors, containerRef, sendCursorMove }: PresenceLayerP
 
   return (
     <>
-      {cursors.map((c) => {
-        const [panX, panY, zoom] = transform
-        const sx = c.x * zoom + panX
-        const sy = c.y * zoom + panY
-        return (
-          <div
-            key={c.userId}
-            style={{
-              position: 'absolute',
-              left: sx,
-              top: sy,
-              pointerEvents: 'none',
-              zIndex: 1000,
-            }}
-          >
-            <svg
-              width="16"
-              height="20"
-              viewBox="0 0 16 20"
-              style={{ display: 'block', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))' }}
-            >
-              <path
-                d="M0,0 L0,16 L4.5,12 L7.5,18.5 L9.5,17.5 L6.5,11 L12,11 Z"
-                fill={c.color}
-                stroke="#18181b"
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-              />
-            </svg>
+      {[...presenceMap.entries()]
+        .filter(([, u]) => u.x !== undefined && u.y !== undefined)
+        .map(([userId, u]) => {
+          const [panX, panY, zoom] = transform
+          const sx = u.x! * zoom + panX
+          const sy = u.y! * zoom + panY
+          return (
             <div
+              key={userId}
               style={{
                 position: 'absolute',
-                left: 14,
-                top: 0,
-                background: c.color,
-                color: '#fff',
-                fontSize: 10,
-                fontWeight: 600,
-                padding: '2px 6px',
-                borderRadius: 4,
-                whiteSpace: 'nowrap',
-                fontFamily: 'system-ui, sans-serif',
-                lineHeight: '14px',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
+                left: sx,
+                top: sy,
+                pointerEvents: 'none',
+                zIndex: 1000,
               }}
             >
-              {c.displayName}
+              <svg
+                width="16"
+                height="20"
+                viewBox="0 0 16 20"
+                style={{ display: 'block', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))' }}
+              >
+                <path
+                  d="M0,0 L0,16 L4.5,12 L7.5,18.5 L9.5,17.5 L6.5,11 L12,11 Z"
+                  fill={u.color}
+                  stroke="#18181b"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 14,
+                  top: 0,
+                  background: u.color,
+                  color: '#fff',
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  whiteSpace: 'nowrap',
+                  fontFamily: 'system-ui, sans-serif',
+                  lineHeight: '14px',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
+                }}
+              >
+                {u.displayName}
+              </div>
             </div>
-          </div>
-        )
-      })}
+          )
+        })}
     </>
   )
 }
@@ -298,17 +287,6 @@ function presenceColor(userId: string): string {
 export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboard }: Props) {
   const token = localStorage.getItem('token') ?? ''
 
-  // Decode the JWT locally to get the current user's ID without an extra request.
-  const currentUserId = useMemo(() => {
-    if (!token) return ''
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1])) as { sub?: string }
-      return payload.sub ?? ''
-    } catch {
-      return ''
-    }
-  }, [token])
-
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [localTitle, setLocalTitle] = useState(title)
@@ -328,8 +306,8 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
   const [copyConfirmed, setCopyConfirmed] = useState(false)
 
   // ── Presence state ─────────────────────────────────────────────────────────
-  const [remoteCursors, setRemoteCursors] = useState<Map<string, RemoteCursor>>(new Map())
-  const [onlineUsers, setOnlineUsers] = useState<Map<string, OnlineUser>>(new Map())
+  // presenceMap (remote peers) comes from the useMapSync hook.
+  // currentUser (local user info for "You" pill) is fetched once from the API.
   const [currentUser, setCurrentUser] = useState<{ displayName: string; color: string } | null>(null)
   const canvasContainerRef = useRef<HTMLDivElement>(null)
 
@@ -450,6 +428,9 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
   }, [])
 
   // Apply incoming events from other users.
+  // Presence events (cursor_move, user_joined, user_left, room_state) are handled
+  // by useMapSync internally. Only non-presence events arrive here.
+  // user_joined and user_left are also forwarded by the hook so we can show toasts.
   const handleEvent = useCallback(
     (event: Record<string, unknown>) => {
       const type = event.type as string
@@ -458,50 +439,20 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
         setNodes((prev) =>
           prev.map((n) => (n.id === nodeId ? { ...n, position: { x, y } } : n)),
         )
-      } else if (type === 'cursor_move') {
-        const { userId, displayName, x, y, color } = event as {
-          userId: string; displayName: string; x: number; y: number; color: string
-        }
-        // Never render the current user's own cursor as a remote cursor.
-        if (userId === currentUserId) return
-        setRemoteCursors((prev) => {
-          const next = new Map(prev)
-          next.set(userId, { userId, displayName, x, y, color })
-          return next
-        })
-        // Ensure they appear in the online list even before a user_joined event.
-        setOnlineUsers((prev) => {
-          if (prev.has(userId)) return prev
-          const next = new Map(prev)
-          next.set(userId, { userId, displayName, color })
-          return next
-        })
       } else if (type === 'user_joined') {
-        const { userId, displayName, color } = event as {
-          userId: string; displayName: string; color: string
-        }
-        setOnlineUsers((prev) => {
-          const next = new Map(prev)
-          next.set(userId, { userId, displayName, color })
-          return next
-        })
+        const { displayName } = event as { displayName: string }
         setToast(`${displayName} joined the map`)
         setTimeout(() => setToast(null), 3000)
       } else if (type === 'user_left') {
-        const { userId, displayName } = event as { userId: string; displayName: string }
-        setRemoteCursors((prev) => { const next = new Map(prev); next.delete(userId); return next })
-        setOnlineUsers((prev) => { const next = new Map(prev); next.delete(userId); return next })
+        const { displayName } = event as { displayName: string }
         setToast(`${displayName} left the map`)
         setTimeout(() => setToast(null), 3000)
-      } else if (type === 'room_state') {
-        const users = event.users as OnlineUser[]
-        setOnlineUsers(new Map(users.map((u) => [u.userId, u])))
       }
     },
-    [setNodes, currentUserId],
+    [setNodes],
   )
 
-  const { sendEvent, sendCursorMove } = useMapSync(mapId, token, { onEvent: handleEvent })
+  const { sendEvent, sendCursorMove, presenceMap } = useMapSync(mapId, token, { onEvent: handleEvent })
 
   // ── Feature: drag to move ───────────────────────────────────────────────────
 
@@ -925,7 +876,7 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
         <div className="flex-1" />
 
         {/* Online users indicator */}
-        {(currentUser || onlineUsers.size > 0) && (
+        {(currentUser || presenceMap.size > 0) && (
           <div className="flex items-center gap-1.5">
             {/* Current user — always shown first, labeled "You" */}
             {currentUser && (
@@ -945,10 +896,10 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
                 <span>You</span>
               </div>
             )}
-            {/* Remote users — up to 4 alongside "You" */}
-            {[...onlineUsers.values()].slice(0, 4).map((u) => (
+            {/* Remote peers — up to 4 alongside "You" */}
+            {[...presenceMap.entries()].slice(0, 4).map(([userId, u]) => (
               <div
-                key={u.userId}
+                key={userId}
                 title={u.displayName}
                 className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border select-none"
                 style={{
@@ -964,8 +915,8 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
                 <span className="max-w-[64px] truncate">{u.displayName}</span>
               </div>
             ))}
-            {onlineUsers.size > 4 && (
-              <span className="text-[10px] text-white/40">+{onlineUsers.size - 4}</span>
+            {presenceMap.size > 4 && (
+              <span className="text-[10px] text-white/40">+{presenceMap.size - 4}</span>
             )}
           </div>
         )}
@@ -1020,7 +971,7 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
             <Background color="#27272a" />
             <Controls />
             <PresenceLayer
-              cursors={[...remoteCursors.values()]}
+              presenceMap={presenceMap}
               containerRef={canvasContainerRef}
               sendCursorMove={sendCursorMove}
             />
