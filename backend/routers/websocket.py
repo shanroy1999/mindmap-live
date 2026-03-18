@@ -24,9 +24,10 @@ from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from db.database import AsyncSessionLocal
-from models.graph import User
+from models.graph import MapMember, MapRole, MindMap, User
 from routers.auth import _ALGORITHM, _SECRET_KEY
 from services.connection_manager import manager, user_presence_color
 
@@ -50,6 +51,25 @@ async def _authenticate(token: str) -> Optional[User]:
         return result.scalar_one_or_none()
 
 
+async def _ensure_map_member(mindmap_id: uuid.UUID, user: User) -> None:
+    """Insert a viewer membership for non-owner users on public maps (idempotent).
+
+    Uses INSERT ... ON CONFLICT DO NOTHING so concurrent connections are safe.
+    """
+    async with AsyncSessionLocal() as db:
+        map_result = await db.execute(select(MindMap).where(MindMap.id == mindmap_id))
+        mindmap = map_result.scalar_one_or_none()
+        if mindmap is None or mindmap.owner_id == user.id or not mindmap.is_public:
+            return
+        stmt = (
+            pg_insert(MapMember)
+            .values(map_id=mindmap_id, user_id=user.id, role=MapRole.viewer)
+            .on_conflict_do_nothing()
+        )
+        await db.execute(stmt)
+        await db.commit()
+
+
 @router.websocket("/mindmaps/{mindmap_id}")
 async def ws_mindmap(
     websocket: WebSocket,
@@ -68,6 +88,8 @@ async def ws_mindmap(
     if user is None:
         await websocket.close(code=_WS_POLICY_VIOLATION)
         return
+
+    await _ensure_map_member(mindmap_id, user)
 
     cid = await manager.connect(websocket, mindmap_id, user.id, user.display_name)
 

@@ -10,7 +10,7 @@ UUID fields are serialised as strings in JSON automatically by Pydantic v2.
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -98,6 +98,19 @@ class MindMapWithRole(MindMapRead):
     """
 
     role: MapRole
+
+
+class SharedMindMapRead(MindMapRead):
+    """MindMapRead extended with the owner's display name for shared-with-me listings."""
+
+    owner_display_name: str
+
+
+class MindMapListResponse(BaseModel):
+    """Response body for GET /api/mindmaps/ — splits maps by ownership."""
+
+    my_maps: List[MindMapRead]
+    shared_with_me: List[SharedMindMapRead]
 
 
 class MindMapUpdate(BaseModel):

@@ -42,6 +42,15 @@ export interface ApiEdge {
   created_at: string
 }
 
+export interface SharedMindMap extends MindMap {
+  owner_display_name: string
+}
+
+export interface MindMapListResponse {
+  my_maps: MindMap[]
+  shared_with_me: SharedMindMap[]
+}
+
 export interface TokenResponse {
   access_token: string
   token_type: string

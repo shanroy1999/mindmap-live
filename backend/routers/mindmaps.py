@@ -22,16 +22,18 @@ from sqlalchemy import delete as sql_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
-from models.graph import Edge, MindMap, Node, User
+from models.graph import Edge, MapMember, MindMap, Node, User
 from routers.auth import get_current_user
 from schemas.graph import (
     EdgeCreate,
     EdgeRead,
     MindMapCreate,
+    MindMapListResponse,
     MindMapRead,
     MindMapUpdate,
     NodeCreate,
     NodeRead,
+    SharedMindMapRead,
 )
 
 router = APIRouter()
@@ -82,13 +84,51 @@ async def create_mindmap(
 
 @router.get(
     "/",
-    response_model=List[MindMapRead],
-    summary="List all mind maps",
+    response_model=MindMapListResponse,
+    summary="List mind maps visible to the current user",
+    responses={
+        401: {"description": "Token is missing or invalid"},
+    },
 )
-async def list_mindmaps(db: AsyncSession = Depends(get_db)) -> List[MindMap]:
-    """Return every mind map, newest first."""
-    result = await db.execute(select(MindMap).order_by(MindMap.created_at.desc()))
-    return list(result.scalars().all())
+async def list_mindmaps(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MindMapListResponse:
+    """Return maps split into owned and shared, newest first within each group.
+
+    * ``my_maps`` — maps where ``owner_id`` matches the current user.
+    * ``shared_with_me`` — public maps where the user has a ``map_members`` row
+      but is **not** the owner, including the owner's display name.
+    """
+    # Maps owned by the current user.
+    my_result = await db.execute(
+        select(MindMap)
+        .where(MindMap.owner_id == current_user.id)
+        .order_by(MindMap.created_at.desc())
+    )
+    my_maps = [MindMapRead.model_validate(m) for m in my_result.scalars().all()]
+
+    # Public maps the user has been added to as a member (not their own maps).
+    shared_result = await db.execute(
+        select(MindMap, User.display_name)
+        .join(MapMember, MapMember.map_id == MindMap.id)
+        .join(User, User.id == MindMap.owner_id)
+        .where(
+            MapMember.user_id == current_user.id,
+            MindMap.owner_id != current_user.id,
+            MindMap.is_public.is_(True),
+        )
+        .order_by(MindMap.created_at.desc())
+    )
+    shared_maps = [
+        SharedMindMapRead(
+            **MindMapRead.model_validate(m).model_dump(),
+            owner_display_name=display_name,
+        )
+        for m, display_name in shared_result.all()
+    ]
+
+    return MindMapListResponse(my_maps=my_maps, shared_with_me=shared_maps)
 
 
 @router.get(

@@ -34,10 +34,15 @@ class TestMindmapsRouter:
         """GET / returns a list of all maps."""
         user = await make_user()
         await make_map(owner=user, title="Listed Map")
-        resp = await async_client.get("/api/mindmaps/")
+        resp = await async_client.get(
+            "/api/mindmaps/",
+            headers={"Authorization": f"Bearer {_make_token(user.id)}"},
+        )
         assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
-        assert any(m["title"] == "Listed Map" for m in resp.json())
+        data = resp.json()
+        assert "my_maps" in data
+        assert "shared_with_me" in data
+        assert any(m["title"] == "Listed Map" for m in data["my_maps"])
 
     async def test_get_mindmap(self, async_client: AsyncClient, make_user, make_map) -> None:
         """GET /{map_id} returns the map to its owner."""

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, FormEvent } from 'react'
 import apiClient from '../api/client'
-import type { MindMap, ApiNode } from '../types/api'
+import type { MindMap, SharedMindMap, ApiNode, MindMapListResponse } from '../types/api'
 
 interface Props {
   onSelectMap: (id: string, title: string) => void
@@ -16,7 +16,8 @@ function formatDate(iso: string): string {
 }
 
 export default function Dashboard({ onSelectMap, onLogout }: Props) {
-  const [maps, setMaps] = useState<MindMap[]>([])
+  const [myMaps, setMyMaps] = useState<MindMap[]>([])
+  const [sharedMaps, setSharedMaps] = useState<SharedMindMap[]>([])
   const [nodeCounts, setNodeCounts] = useState<Record<string, number | null>>({})
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -28,15 +29,18 @@ export default function Dashboard({ onSelectMap, onLogout }: Props) {
   const loadMaps = useCallback(() => {
     setLoading(true)
     apiClient
-      .get<MindMap[]>('/api/mindmaps/')
+      .get<MindMapListResponse>('/api/mindmaps/')
       .then((res) => {
-        setMaps(res.data)
+        const { my_maps, shared_with_me } = res.data
+        setMyMaps(my_maps)
+        setSharedMaps(shared_with_me)
         setLoading(false)
-        // Seed all counts as null (still loading), then resolve in parallel.
+        // Seed all counts as null, then resolve in parallel.
+        const allMaps = [...my_maps, ...shared_with_me]
         const initial: Record<string, number | null> = {}
-        res.data.forEach((m) => { initial[m.id] = null })
+        allMaps.forEach((m) => { initial[m.id] = null })
         setNodeCounts(initial)
-        res.data.forEach((map) => {
+        allMaps.forEach((map) => {
           apiClient
             .get<ApiNode[]>(`/api/mindmaps/${map.id}/nodes`)
             .then((r) => setNodeCounts((prev) => ({ ...prev, [map.id]: r.data.length })))
@@ -86,11 +90,13 @@ export default function Dashboard({ onSelectMap, onLogout }: Props) {
     if (!window.confirm(`Delete "${map.title}"? This cannot be undone.`)) return
     try {
       await apiClient.delete(`/api/mindmaps/${map.id}`)
-      setMaps((prev) => prev.filter((m) => m.id !== map.id))
+      setMyMaps((prev) => prev.filter((m) => m.id !== map.id))
     } catch {
       console.error('Failed to delete map')
     }
   }
+
+  const isEmpty = !loading && myMaps.length === 0 && sharedMaps.length === 0
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col">
@@ -111,14 +117,14 @@ export default function Dashboard({ onSelectMap, onLogout }: Props) {
       {/* ── Main ── */}
       <main className="flex-1 px-6 py-8 w-full max-w-6xl mx-auto">
 
-        {/* Header row */}
+        {/* ── My Maps ── */}
         <div className="flex items-start justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold text-white">My Maps</h1>
             <p className="text-sm text-white/40 mt-0.5">
               {loading
                 ? 'Loading…'
-                : `${maps.length} map${maps.length !== 1 ? 's' : ''}`}
+                : `${myMaps.length} map${myMaps.length !== 1 ? 's' : ''}`}
             </p>
           </div>
           <button
@@ -141,8 +147,8 @@ export default function Dashboard({ onSelectMap, onLogout }: Props) {
           </div>
         )}
 
-        {/* Empty state */}
-        {!loading && maps.length === 0 && (
+        {/* Empty state — no maps at all */}
+        {isEmpty && (
           <div className="flex flex-col items-center justify-center py-28 gap-4 text-center">
             <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-white/10 flex items-center justify-center text-3xl select-none">
               🗺️
@@ -162,10 +168,24 @@ export default function Dashboard({ onSelectMap, onLogout }: Props) {
           </div>
         )}
 
-        {/* Map grid */}
-        {!loading && maps.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {maps.map((map) => (
+        {/* Inline empty state — own maps empty but shared maps exist */}
+        {!loading && myMaps.length === 0 && sharedMaps.length > 0 && (
+          <div className="flex items-center gap-3 py-6 px-4 rounded-xl border border-dashed border-white/10 text-white/40 text-sm mb-10">
+            <span className="text-lg select-none">🗺️</span>
+            <span>You haven't created any maps yet.</span>
+            <button
+              onClick={() => setShowModal(true)}
+              className="ml-auto px-3 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 border border-indigo-500/30 text-xs font-semibold rounded-md transition-colors cursor-pointer"
+            >
+              + New Map
+            </button>
+          </div>
+        )}
+
+        {/* My Maps grid */}
+        {!loading && myMaps.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-10">
+            {myMaps.map((map) => (
               <MapCard
                 key={map.id}
                 map={map}
@@ -175,6 +195,28 @@ export default function Dashboard({ onSelectMap, onLogout }: Props) {
               />
             ))}
           </div>
+        )}
+
+        {/* ── Shared with me ── */}
+        {!loading && sharedMaps.length > 0 && (
+          <section>
+            <div className="mb-5">
+              <h2 className="text-lg font-bold text-white">Shared with me</h2>
+              <p className="text-sm text-white/40 mt-0.5">
+                {sharedMaps.length} map{sharedMaps.length !== 1 ? 's' : ''} shared by others
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {sharedMaps.map((map) => (
+                <SharedMapCard
+                  key={map.id}
+                  map={map}
+                  nodeCount={nodeCounts[map.id] ?? null}
+                  onOpen={() => onSelectMap(map.id, map.title)}
+                />
+              ))}
+            </div>
+          </section>
         )}
       </main>
 
@@ -293,6 +335,56 @@ function MapCard({
             ? '…'
             : `${nodeCount} node${nodeCount !== 1 ? 's' : ''}`}
         </span>
+      </div>
+    </div>
+  )
+}
+
+// ── SharedMapCard ─────────────────────────────────────────────────────────────
+
+function SharedMapCard({
+  map,
+  nodeCount,
+  onOpen,
+}: {
+  map: SharedMindMap
+  nodeCount: number | null
+  onOpen: () => void
+}) {
+  return (
+    <div
+      onClick={onOpen}
+      className="group relative bg-zinc-900 border border-white/10 rounded-xl p-5 flex flex-col gap-3 cursor-pointer hover:border-white/20 hover:bg-zinc-800/60 transition-all"
+    >
+      {/* Map icon */}
+      <div className="w-8 h-8 rounded-lg bg-violet-950/60 border border-violet-800/30 flex items-center justify-center text-violet-400 text-sm select-none">
+        ✦
+      </div>
+
+      {/* Title + shared by */}
+      <div className="flex-1 min-h-0">
+        <p className="font-semibold text-sm text-white leading-snug line-clamp-2">
+          {map.title}
+        </p>
+        <p className="text-xs text-white/50 mt-1">
+          Shared by <span className="text-white/70">{map.owner_display_name}</span>
+        </p>
+        {map.description && (
+          <p className="text-xs text-white/40 mt-1.5 line-clamp-2 leading-relaxed">
+            {map.description}
+          </p>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+        <span className="text-[11px] text-white/30">{formatDate(map.created_at)}</span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onOpen() }}
+          className="px-3 py-1 text-xs font-semibold bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 border border-indigo-500/30 rounded-md transition-colors cursor-pointer"
+        >
+          Open
+        </button>
       </div>
     </div>
   )
