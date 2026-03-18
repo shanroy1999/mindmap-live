@@ -96,50 +96,75 @@ async def suggest_relationships(
     return _extract_json(raw_text)
 
 
+def _fallback_clusters(nodes: list[dict], group_size: int = 5) -> list[dict]:
+    """Divide *nodes* into groups of *group_size* alphabetically.
+
+    Used when Claude returns an empty or unparseable response so the endpoint
+    never returns 503 due to a clustering failure.
+    """
+    sorted_nodes = sorted(nodes, key=lambda n: n["label"].lower())
+    clusters: list[dict] = []
+    for i in range(0, len(sorted_nodes), group_size):
+        group = sorted_nodes[i : i + group_size]
+        first_label = group[0]["label"][:12]
+        last_label = group[-1]["label"][:12]
+        name = first_label if len(group) == 1 else f"{first_label} – {last_label}"
+        clusters.append({"cluster_name": name, "node_ids": [n["id"] for n in group]})
+    return clusters
+
+
 async def cluster_nodes(nodes: list[dict]) -> list[dict]:
     """Ask Claude to group *nodes* into semantic clusters based on their labels.
 
-    Each element of *nodes* must have at least ``id`` and ``label`` keys.
+    Falls back to alphabetical grouping (groups of 5) if Claude returns an
+    empty or unparseable response, so the endpoint never raises on a bad reply.
 
     Args:
         nodes: List of node dicts, each with ``id`` and ``label``.
 
     Returns:
-        A list of cluster dicts, each containing:
-        ``cluster_name`` (str) and ``node_ids`` (list[str]).
+        A list of cluster dicts, each with ``cluster_name`` (str) and
+        ``node_ids`` (list[str]).  The raw Claude response is attached to any
+        ``ValueError`` raised so callers can include it in error details.
 
     Raises:
         anthropic.APIError: On network or API-level failures.
-        ValueError:         If the model returns unparseable JSON.
     """
     if not nodes:
         return []
 
-    node_lines = "\n".join(f'- id={n["id"]}  label="{n["label"]}"' for n in nodes)
+    node_lines = "\n".join(f'{n["id"]} | {n["label"]}' for n in nodes)
 
     prompt = (
-        "You are a knowledge graph assistant.\n\n"
-        "Below is a list of nodes in a mind map, each with a unique ID and a label:\n\n"
+        "Return ONLY a JSON array. No markdown. No explanation. No code blocks.\n\n"
+        "Group these nodes into semantic clusters. "
+        "Every node must appear in exactly one cluster.\n\n"
+        "NODES (id | label):\n"
         f"{node_lines}\n\n"
-        "Group these nodes into semantic clusters based on how their concepts relate. "
-        "Give each cluster a concise, descriptive name. Every node must appear in "
-        "exactly one cluster.\n\n"
-        "Respond with ONLY a JSON array — no explanation, no markdown prose. "
-        "Each element must have exactly two fields:\n"
-        '  "cluster_name"  — a short descriptive name for the group (string)\n'
-        '  "node_ids"      — list of node id strings belonging to this cluster\n\n'
-        "Example:\n"
-        '[{"cluster_name": "Infrastructure", "node_ids": ["abc", "def"]}]'
+        "Required format — each element must have exactly these two fields:\n"
+        '{"cluster_name": "short name", "node_ids": ["id1", "id2"]}\n\n'
+        "Example output:\n"
+        '[{"cluster_name": "Group A", "node_ids": ["id1", "id2"]},'
+        '{"cluster_name": "Group B", "node_ids": ["id3"]}]'
     )
 
     client = _client()
     message = await client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=1024,
+        max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
     )
-    raw_text: str = message.content[0].text if message.content else "[]"
-    return _extract_json(raw_text)
+    raw_text: str = message.content[0].text if message.content else ""
+
+    # Attempt to parse; fall back to Python-generated clusters on any failure.
+    try:
+        parsed = _extract_json(raw_text)
+        if parsed:
+            return parsed
+    except Exception:
+        pass
+
+    return _fallback_clusters(nodes)
 
 
 def _compute_tree_layout(

@@ -119,7 +119,7 @@ async def get_node_clusters(
 
     try:
         clusters = await cluster_nodes(nodes)
-    except (ValueError, Exception) as exc:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"AI service error: {exc}",
