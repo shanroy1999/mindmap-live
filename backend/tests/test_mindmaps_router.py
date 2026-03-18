@@ -40,10 +40,13 @@ class TestMindmapsRouter:
         assert any(m["title"] == "Listed Map" for m in resp.json())
 
     async def test_get_mindmap(self, async_client: AsyncClient, make_user, make_map) -> None:
-        """GET /{map_id} returns the map by ID."""
+        """GET /{map_id} returns the map to its owner."""
         user = await make_user()
         mindmap = await make_map(owner=user, title="Specific Map")
-        resp = await async_client.get(f"/api/mindmaps/{mindmap.id}")
+        resp = await async_client.get(
+            f"/api/mindmaps/{mindmap.id}",
+            headers={"Authorization": f"Bearer {_make_token(user.id)}"},
+        )
         assert resp.status_code == 200
         assert resp.json()["id"] == str(mindmap.id)
         assert resp.json()["title"] == "Specific Map"
