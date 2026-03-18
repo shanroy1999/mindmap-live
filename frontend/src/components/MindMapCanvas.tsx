@@ -974,9 +974,8 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
               style={{ background: '#18181b' }}
               nodeColor="#6366f1"
               maskColor="rgba(0,0,0,0.4)"
-              position="bottom-right"
             />
-            <Controls position="bottom-right" />
+            <Controls />
             <PresenceLayer
               presenceMap={presenceMap}
               containerRef={canvasContainerRef}
