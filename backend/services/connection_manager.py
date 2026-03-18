@@ -1,21 +1,21 @@
-"""WebSocket connection manager with Redis pub/sub.
+"""WebSocket connection manager with local delivery and Redis pub/sub relay.
 
 Architecture
 ────────────
-Each map room has one long-running ``subscribe`` task per process that listens
-on the Redis channel ``mindmap:{map_id}`` and forwards messages to every local
-WebSocket connection.
+``broadcast`` delivers messages in two steps:
 
-``broadcast`` publishes a JSON envelope to that channel.  The envelope carries
-a ``_cid`` (connection ID) identifying the sender so the subscribe loop can
-skip that connection, preserving the "no echo to sender" guarantee even though
-delivery is now indirected through Redis.
+1. **Local delivery** — iterate the in-process room list and send directly to
+   every WebSocket in this worker (excluding the sender).  This works even when
+   Redis is unavailable (dev environments, Redis restarts, etc.).
 
-This design scales horizontally: when multiple uvicorn workers run behind a
-load balancer each worker has its own in-process room state.  A message
-published by worker A is delivered to Redis and then forwarded by the subscribe
-tasks running in ALL workers, so every connected client receives it regardless
-of which worker accepted their WebSocket.
+2. **Redis relay** — publish to ``mindmap:{map_id}`` so that workers running in
+   other processes/containers also receive the message and forward it to their
+   local connections.  The envelope carries ``_wid`` (worker ID) so that the
+   subscribe loop in the *same* worker can skip messages it already delivered
+   directly, preventing double delivery.
+
+This design is correct for both single-server (Redis optional) and horizontally
+scaled (multi-worker behind a load balancer) deployments.
 """
 
 import asyncio
@@ -25,6 +25,10 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Optional
+
+# Unique ID for this worker process — embedded in Redis envelopes so the
+# subscribe loop can skip messages that were already delivered locally.
+_WORKER_ID: str = str(uuid.uuid4())
 
 import redis.asyncio as aioredis
 from fastapi import WebSocket
@@ -256,18 +260,21 @@ class ConnectionManager:
         mindmap_id: uuid.UUID,
         exclude_websocket: Optional[WebSocket] = None,
     ) -> None:
-        """Publish *message* to the Redis channel for *mindmap_id*.
+        """Deliver *message* locally then relay via Redis for other workers.
 
-        The message is wrapped in an envelope that carries the sender's
-        connection ID so the subscribe loop can exclude them from delivery::
+        Step 1 — direct local delivery to every WebSocket in this process
+        (excluding the sender).  This works without Redis and is the primary
+        delivery path for single-server deployments.
 
-            {"_cid": "<sender-cid-or-null>", "data": {<original message>}}
+        Step 2 — publish to Redis so other workers forward the message to
+        their local connections.  The envelope carries ``_wid`` so this
+        worker's subscribe loop knows to skip these messages (already done).
 
         Args:
             message:           JSON-serialisable dict to broadcast.
             mindmap_id:        Target map room.
-            exclude_websocket: The sending connection; its *cid* is embedded in
-                               the envelope so the subscribe loop skips it.
+            exclude_websocket: The sending connection; its *cid* is used to
+                               identify the sender so they are excluded.
         """
         key = str(mindmap_id)
 
@@ -278,9 +285,26 @@ class ConnectionManager:
                     sender_cid = conn.cid
                     break
 
-        envelope = json.dumps({"_cid": sender_cid, "data": message})
-        pub = await self._publisher()
-        await pub.publish(f"mindmap:{key}", envelope)
+        # ── Step 1: deliver directly to all local connections ─────────────
+        dead: list[_Connection] = []
+        for conn in list(self._rooms.get(key, [])):
+            if conn.cid == sender_cid:
+                continue
+            try:
+                await conn.websocket.send_json(message)
+            except Exception:
+                dead.append(conn)
+
+        for conn in dead:
+            self._rooms[key] = [c for c in self._rooms[key] if c is not conn]
+
+        # ── Step 2: relay to other workers via Redis (best-effort) ────────
+        try:
+            envelope = json.dumps({"_cid": sender_cid, "_wid": _WORKER_ID, "data": message})
+            pub = await self._publisher()
+            await pub.publish(f"mindmap:{key}", envelope)
+        except Exception:
+            pass  # Redis unavailable — local delivery already completed above.
 
     async def subscribe(self, mindmap_id: uuid.UUID) -> None:
         """Listen on ``mindmap:{mindmap_id}`` and forward messages to local sockets.
@@ -312,8 +336,14 @@ class ConnectionManager:
                 try:
                     envelope = json.loads(raw["data"])
                     sender_cid: Optional[str] = envelope.get("_cid")
+                    sender_wid: Optional[str] = envelope.get("_wid")
                     data: dict = envelope["data"]
                 except (json.JSONDecodeError, KeyError, TypeError):
+                    continue
+
+                # Skip messages published by this worker — already delivered
+                # directly in broadcast() to avoid double delivery.
+                if sender_wid == _WORKER_ID:
                     continue
 
                 dead: list[_Connection] = []
