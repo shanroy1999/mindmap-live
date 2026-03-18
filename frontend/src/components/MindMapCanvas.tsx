@@ -278,10 +278,37 @@ function toRFEdge(e: ApiEdge): RFEdge {
   }
 }
 
+// ── Presence color ────────────────────────────────────────────────────────────
+// Mirrors the Python backend algorithm: index = uuid_as_int % palette_length.
+// Uses BigInt so the full 128-bit UUID value is preserved (matching the server).
+
+const _PRESENCE_COLORS = ['#f472b6', '#34d399', '#60a5fa', '#fb923c', '#a78bfa', '#facc15']
+
+function presenceColor(userId: string): string {
+  try {
+    const n = BigInt('0x' + userId.replace(/-/g, ''))
+    return _PRESENCE_COLORS[Number(n % BigInt(_PRESENCE_COLORS.length))]
+  } catch {
+    return _PRESENCE_COLORS[0]
+  }
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboard }: Props) {
   const token = localStorage.getItem('token') ?? ''
+
+  // Decode the JWT locally to get the current user's ID without an extra request.
+  const currentUserId = useMemo(() => {
+    if (!token) return ''
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1])) as { sub?: string }
+      return payload.sub ?? ''
+    } catch {
+      return ''
+    }
+  }, [token])
+
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [localTitle, setLocalTitle] = useState(title)
@@ -303,6 +330,7 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
   // ── Presence state ─────────────────────────────────────────────────────────
   const [remoteCursors, setRemoteCursors] = useState<Map<string, RemoteCursor>>(new Map())
   const [onlineUsers, setOnlineUsers] = useState<Map<string, OnlineUser>>(new Map())
+  const [currentUser, setCurrentUser] = useState<{ displayName: string; color: string } | null>(null)
   const canvasContainerRef = useRef<HTMLDivElement>(null)
 
   // Keep a ref so the stable `stableCommit` wrapper below always calls the
@@ -408,6 +436,19 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
     return () => document.removeEventListener('mousedown', handleMouseDown)
   }, [typePickerOpen])
 
+  // Fetch the current user's profile once so we can show "You" in the toolbar.
+  useEffect(() => {
+    apiClient
+      .get<{ id: string; display_name: string }>('/api/auth/me')
+      .then((res) => {
+        setCurrentUser({
+          displayName: res.data.display_name,
+          color: presenceColor(res.data.id),
+        })
+      })
+      .catch(console.error)
+  }, [])
+
   // Apply incoming events from other users.
   const handleEvent = useCallback(
     (event: Record<string, unknown>) => {
@@ -421,6 +462,8 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
         const { userId, displayName, x, y, color } = event as {
           userId: string; displayName: string; x: number; y: number; color: string
         }
+        // Never render the current user's own cursor as a remote cursor.
+        if (userId === currentUserId) return
         setRemoteCursors((prev) => {
           const next = new Map(prev)
           next.set(userId, { userId, displayName, x, y, color })
@@ -442,16 +485,20 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
           next.set(userId, { userId, displayName, color })
           return next
         })
+        setToast(`${displayName} joined the map`)
+        setTimeout(() => setToast(null), 3000)
       } else if (type === 'user_left') {
-        const userId = event.userId as string
+        const { userId, displayName } = event as { userId: string; displayName: string }
         setRemoteCursors((prev) => { const next = new Map(prev); next.delete(userId); return next })
         setOnlineUsers((prev) => { const next = new Map(prev); next.delete(userId); return next })
+        setToast(`${displayName} left the map`)
+        setTimeout(() => setToast(null), 3000)
       } else if (type === 'room_state') {
         const users = event.users as OnlineUser[]
         setOnlineUsers(new Map(users.map((u) => [u.userId, u])))
       }
     },
-    [setNodes],
+    [setNodes, currentUserId],
   )
 
   const { sendEvent, sendCursorMove } = useMapSync(mapId, token, { onEvent: handleEvent })
@@ -878,9 +925,28 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
         <div className="flex-1" />
 
         {/* Online users indicator */}
-        {onlineUsers.size > 0 && (
+        {(currentUser || onlineUsers.size > 0) && (
           <div className="flex items-center gap-1.5">
-            {[...onlineUsers.values()].slice(0, 5).map((u) => (
+            {/* Current user — always shown first, labeled "You" */}
+            {currentUser && (
+              <div
+                title={currentUser.displayName}
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border select-none"
+                style={{
+                  borderColor: `${currentUser.color}50`,
+                  background: `${currentUser.color}20`,
+                  color: currentUser.color,
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                  style={{ background: currentUser.color }}
+                />
+                <span>You</span>
+              </div>
+            )}
+            {/* Remote users — up to 4 alongside "You" */}
+            {[...onlineUsers.values()].slice(0, 4).map((u) => (
               <div
                 key={u.userId}
                 title={u.displayName}
@@ -898,8 +964,8 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
                 <span className="max-w-[64px] truncate">{u.displayName}</span>
               </div>
             ))}
-            {onlineUsers.size > 5 && (
-              <span className="text-[10px] text-white/40">+{onlineUsers.size - 5}</span>
+            {onlineUsers.size > 4 && (
+              <span className="text-[10px] text-white/40">+{onlineUsers.size - 4}</span>
             )}
           </div>
         )}
