@@ -242,8 +242,9 @@ def _compute_tree_layout(
         }
         return x_cursor
 
-    total_leaves = sum(_leaf_count(r, set()) for r in roots)
-    x_cursor: float = canvas_center - total_leaves * x_spacing / 2
+    # Always start placement at x=0 and let the tree grow right naturally.
+    # A normalization pass below shifts everything into positive canvas space.
+    x_cursor: float = 0.0
     seen: set[str] = set()
     for root in roots:
         x_cursor = _place(root, 0, x_cursor, seen)
@@ -255,10 +256,22 @@ def _compute_tree_layout(
         total = len(unpositioned)
         for i, nid in enumerate(unpositioned):
             positions[nid] = {
-                "x": round(canvas_center + (i - (total - 1) / 2) * x_spacing),
+                "x": round(x_cursor + (i - (total - 1) / 2) * x_spacing),
                 "y": y_start + (max_level + 2) * y_spacing,
                 "level": max_level + 2,
             }
+
+    # Normalize: shift the entire tree so the leftmost node is at x=100
+    # and the topmost node is at y=50. This guarantees all coordinates are
+    # positive regardless of tree width or starting position.
+    if positions:
+        min_x = min(pos["x"] for pos in positions.values())
+        min_y = min(pos["y"] for pos in positions.values())
+        x_shift = 100 - min_x
+        y_shift = 50 - min_y
+        for pos in positions.values():
+            pos["x"] += x_shift
+            pos["y"] += y_shift
 
     return [
         {"id": nid, "x": pos["x"], "y": pos["y"], "level": pos["level"]}
