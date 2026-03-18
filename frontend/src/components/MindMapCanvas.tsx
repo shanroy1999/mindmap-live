@@ -349,9 +349,14 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
     const next = !isPublic
     setIsPublic(next)
     try {
-      await apiClient.patch(`/api/mindmaps/${mapId}`, { is_public: next })
-    } catch {
-      setIsPublic(!next) // revert on failure
+      console.log('[Share] PATCH /api/mindmaps/%s →', mapId, { is_public: next })
+      const res = await apiClient.patch(`/api/mindmaps/${mapId}`, { is_public: next })
+      console.log('[Share] PATCH response:', res.status, res.data)
+    } catch (err: unknown) {
+      console.error('[Share] PATCH failed:', err)
+      setIsPublic(!next) // revert optimistic update
+      setToast('Could not update sharing settings — try again')
+      setTimeout(() => setToast(null), 3000)
     }
   }, [mapId, isPublic])
 
