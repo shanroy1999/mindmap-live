@@ -3,6 +3,7 @@ import ReactFlow, {
   addEdge,
   Background,
   Controls,
+  MiniMap,
   Handle,
   Position,
   useNodesState,
@@ -969,7 +970,13 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
             fitView
           >
             <Background color="#27272a" />
-            <Controls />
+            <MiniMap
+              style={{ background: '#18181b' }}
+              nodeColor="#6366f1"
+              maskColor="rgba(0,0,0,0.4)"
+              position="bottom-right"
+            />
+            <Controls position="bottom-right" />
             <PresenceLayer
               presenceMap={presenceMap}
               containerRef={canvasContainerRef}
