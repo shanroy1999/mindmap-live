@@ -296,6 +296,9 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
   const typePickerRef = useRef<HTMLDivElement>(null)
   const [layoutLoading, setLayoutLoading] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [isPublic, setIsPublic] = useState<boolean | null>(null)
+  const [copyConfirmed, setCopyConfirmed] = useState(false)
 
   // ── Presence state ─────────────────────────────────────────────────────────
   const [remoteCursors, setRemoteCursors] = useState<Map<string, RemoteCursor>>(new Map())
@@ -327,6 +330,45 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
   const stableCommit = useCallback((id: string, label: string) => {
     commitEditRef.current?.(id, label)
   }, [])
+
+  // ── Share modal ─────────────────────────────────────────────────────────────
+
+  const openShareModal = useCallback(async () => {
+    setShareModalOpen(true)
+    if (isPublic === null) {
+      try {
+        const res = await apiClient.get<{ is_public: boolean }>(`/api/mindmaps/${mapId}`)
+        setIsPublic(res.data.is_public)
+      } catch {
+        setIsPublic(false)
+      }
+    }
+  }, [mapId, isPublic])
+
+  const handleTogglePublic = useCallback(async () => {
+    const next = !isPublic
+    setIsPublic(next)
+    try {
+      await apiClient.patch(`/api/mindmaps/${mapId}`, { is_public: next })
+    } catch {
+      setIsPublic(!next) // revert on failure
+    }
+  }, [mapId, isPublic])
+
+  const handleCopyLink = useCallback(() => {
+    const url = `https://mindmap-live.vercel.app/maps/${mapId}`
+    navigator.clipboard.writeText(url).catch(() => {})
+    setCopyConfirmed(true)
+    setTimeout(() => setCopyConfirmed(false), 2000)
+  }, [mapId])
+
+  // Close share modal on Escape.
+  useEffect(() => {
+    if (!shareModalOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShareModalOpen(false) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [shareModalOpen])
 
   // Sync the displayed title whenever the prop changes (e.g. parent refetches).
   useEffect(() => { setLocalTitle(title) }, [title])
@@ -822,6 +864,12 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
         >
           ✨ AI Suggest
         </button>
+        <button
+          onClick={openShareModal}
+          className="px-3 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-white border border-white/10 rounded-md transition-colors cursor-pointer"
+        >
+          Share
+        </button>
         <div className="flex-1" />
 
         {/* Online users indicator */}
@@ -1013,6 +1061,89 @@ export default function MindMapCanvas({ mapId, title, onLogout, onBackToDashboar
           style={{ animation: 'toastSlideUp 0.3s ease forwards' }}
         >
           {toast}
+        </div>
+      )}
+
+      {/* Share modal */}
+      {shareModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 px-4"
+          onClick={() => setShareModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm bg-zinc-900 border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col gap-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-white">Share Map</h2>
+              <button
+                onClick={() => setShareModalOpen(false)}
+                className="text-white/40 hover:text-white transition-colors cursor-pointer leading-none text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* URL + copy */}
+            <div className="flex flex-col gap-2">
+              <label className="text-[11px] font-semibold uppercase tracking-widest text-white/30">
+                Map Link
+              </label>
+              <div className="flex gap-2">
+                <input
+                  readOnly
+                  value={`https://mindmap-live.vercel.app/maps/${mapId}`}
+                  onFocus={(e) => e.target.select()}
+                  className="flex-1 min-w-0 text-xs bg-zinc-800 border border-white/10 rounded-md px-3 py-2 text-white/70 outline-none"
+                />
+                <button
+                  onClick={handleCopyLink}
+                  className={`shrink-0 px-3 py-2 text-xs font-semibold rounded-md border transition-colors cursor-pointer ${
+                    copyConfirmed
+                      ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                      : 'bg-zinc-800 hover:bg-zinc-700 border-white/10 text-white'
+                  }`}
+                >
+                  {copyConfirmed ? 'Copied!' : 'Copy Link'}
+                </button>
+              </div>
+            </div>
+
+            {/* Public toggle */}
+            <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/10">
+              <div className="flex flex-col gap-1">
+                <span className="text-sm font-medium text-white">Anyone with the link can join</span>
+                <span className="text-xs text-white/40">
+                  {isPublic
+                    ? 'Map is public — any authenticated user can view and edit.'
+                    : 'Map is private — only you can access it.'}
+                </span>
+              </div>
+              <button
+                onClick={handleTogglePublic}
+                disabled={isPublic === null}
+                aria-pressed={isPublic ?? false}
+                className="shrink-0 relative rounded-full transition-colors cursor-pointer disabled:opacity-40"
+                style={{
+                  width: 40,
+                  height: 22,
+                  background: isPublic ? '#6366f1' : '#3f3f46',
+                }}
+              >
+                <span
+                  className="absolute top-0.5 bg-white rounded-full shadow"
+                  style={{
+                    width: 18,
+                    height: 18,
+                    left: 2,
+                    transform: isPublic ? 'translateX(18px)' : 'translateX(0)',
+                    transition: 'transform 0.2s',
+                  }}
+                />
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

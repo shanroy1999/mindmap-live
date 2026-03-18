@@ -96,6 +96,7 @@ async def list_mindmaps(db: AsyncSession = Depends(get_db)) -> List[MindMap]:
     response_model=MindMapRead,
     summary="Get a single mind map",
     responses={
+        403: {"description": "Map is private and the requesting user is not the owner"},
         404: {"description": "MindMap not found"},
         422: {"description": "Validation error — map_id is not a valid UUID"},
     },
@@ -103,9 +104,20 @@ async def list_mindmaps(db: AsyncSession = Depends(get_db)) -> List[MindMap]:
 async def get_mindmap(
     map_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> MindMap:
-    """Return a single mind map by ID."""
-    return await _get_map_or_404(map_id, db)
+    """Return a single mind map by ID.
+
+    Access is granted when the requesting user is the owner **or** the map has
+    ``is_public=True``.  Private maps owned by someone else return **403**.
+    """
+    mindmap = await _get_map_or_404(map_id, db)
+    if mindmap.owner_id != current_user.id and not mindmap.is_public:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This map is private",
+        )
+    return mindmap
 
 
 @router.patch(
@@ -113,6 +125,7 @@ async def get_mindmap(
     response_model=MindMapRead,
     summary="Update a mind map",
     responses={
+        403: {"description": "Only the map owner can update this map"},
         404: {"description": "MindMap not found"},
         422: {"description": "Validation error — invalid body or map_id"},
     },
@@ -121,9 +134,18 @@ async def update_mindmap(
     map_id: uuid.UUID,
     payload: MindMapUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> MindMap:
-    """Apply a partial update (title, description, is_public) to a mind map."""
+    """Apply a partial update (title, description, is_public) to a mind map.
+
+    Only the map owner may call this endpoint.
+    """
     mindmap = await _get_map_or_404(map_id, db)
+    if mindmap.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the map owner can update this map",
+        )
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(mindmap, field, value)
     await db.commit()
