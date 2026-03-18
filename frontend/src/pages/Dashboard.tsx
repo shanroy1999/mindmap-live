@@ -378,7 +378,12 @@ function SharedMapCard({
 
       {/* Footer */}
       <div className="flex items-center justify-between pt-2 border-t border-white/5">
-        <span className="text-[11px] text-white/30">{formatDate(map.created_at)}</span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px] text-white/30">{formatDate(map.created_at)}</span>
+          <span className="text-[11px] text-white/30">
+            {nodeCount === null ? '…' : `${nodeCount} node${nodeCount !== 1 ? 's' : ''}`}
+          </span>
+        </div>
         <button
           onClick={(e) => { e.stopPropagation(); onOpen() }}
           className="px-3 py-1 text-xs font-semibold bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 border border-indigo-500/30 rounded-md transition-colors cursor-pointer"
