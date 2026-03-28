@@ -2,6 +2,8 @@
 
 A real-time collaborative knowledge graph builder. Create interconnected idea nodes, draw relationships between them, and let AI suggest connections you haven't thought of — all synced live across multiple users.
 
+Deployed at : https://mindmap-live.vercel.app/
+
 ## Features
 
 - Real-time multi-user collaboration via WebSockets
